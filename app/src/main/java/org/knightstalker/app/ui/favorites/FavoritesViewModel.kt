@@ -25,15 +25,17 @@ class FavoritesViewModel(
     val state: StateFlow<FavoritesState> = _state.asStateFlow()
 
     init {
-        val portal = authManager.currentPortal ?: return
-        viewModelScope.launch {
-            favoriteRepository.getFavoriteChannels(portal.id).collect { channels ->
-                _state.update { it.copy(channels = channels) }
+        val portal = authManager.currentPortal
+        if (portal != null) {
+            viewModelScope.launch {
+                favoriteRepository.getFavoriteChannels(portal.id).collect { channels ->
+                    _state.update { it.copy(channels = channels) }
+                }
             }
-        }
-        viewModelScope.launch {
-            favoriteRepository.getFavoriteVod(portal.id).collect { vod ->
-                _state.update { it.copy(vod = vod) }
+            viewModelScope.launch {
+                favoriteRepository.getFavoriteVod(portal.id).collect { vod ->
+                    _state.update { it.copy(vod = vod) }
+                }
             }
         }
     }

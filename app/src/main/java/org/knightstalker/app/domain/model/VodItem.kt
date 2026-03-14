@@ -6,13 +6,13 @@ data class VodItem(
     val name: String,
     val cmd: String,
     val logo: String?,
-    val description: String?,
-    val year: String?,
-    val genre: String?,
-    val rating: String?,
-    val duration: String?,
-    val director: String?,
-    val actors: String?,
+    val description: String? = null,
+    val year: String? = null,
+    val genre: String? = null,
+    val rating: String? = null,
+    val duration: String? = null,
+    val director: String? = null,
+    val actors: String? = null,
     val isFavorite: Boolean = false
 )
 

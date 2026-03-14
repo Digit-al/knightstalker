@@ -32,6 +32,7 @@ class StalkerAuthManager(private val api: StalkerApi) {
         _errorMessage.value = null
         currentPortal = portal
 
+        api.resolveApiBase(portal.url)
         val handshakeResult = api.handshake(portal.url)
         if (handshakeResult.isFailure) {
             _connectionState.value = ConnectionState.ERROR

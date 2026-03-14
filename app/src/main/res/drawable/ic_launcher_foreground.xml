@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Knight chess piece silhouette -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,20 C48,20 43,24 41,30 L38,30 C36,30 34,32 34,34 L34,38 C34,40 36,42 38,42 L39,42 C38,46 36,50 34,54 C32,58 32,62 34,66 L34,78 C34,80 36,82 38,82 L70,82 C72,82 74,80 74,78 L74,66 C76,62 76,58 74,54 C72,50 70,46 69,42 L70,42 C72,42 74,40 74,38 L74,34 C74,32 72,30 70,30 L67,30 C65,24 60,20 54,20 Z M46,36 A3,3 0 1,1 52,36 A3,3 0 1,1 46,36 Z" />
+</vector>

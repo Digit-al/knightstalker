@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.ui.components
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -20,19 +20,19 @@ import coil.compose.AsyncImage
 import org.knightstalker.app.domain.model.Channel
 import org.knightstalker.app.ui.theme.Accent
 import org.knightstalker.app.ui.theme.CardBackground
+import org.knightstalker.app.ui.theme.TextSecondary
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChannelCard(
     channel: Channel,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    onToggleFavorite: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = CardBackground),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -99,12 +99,15 @@ fun ChannelCard(
                 }
             }
 
-            // Favorite icon
-            if (channel.isFavorite) {
+            // Favorite button
+            IconButton(
+                onClick = onToggleFavorite,
+                modifier = Modifier.size(36.dp)
+            ) {
                 Icon(
-                    imageVector = Icons.Default.Favorite,
-                    contentDescription = "Favorite",
-                    tint = Accent,
+                    imageVector = if (channel.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    contentDescription = if (channel.isFavorite) "Unfavorite" else "Favorite",
+                    tint = if (channel.isFavorite) Accent else TextSecondary,
                     modifier = Modifier.size(20.dp)
                 )
             }

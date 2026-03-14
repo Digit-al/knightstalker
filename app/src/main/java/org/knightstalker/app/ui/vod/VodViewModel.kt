@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import org.knightstalker.app.data.local.prefs.UserPreferences
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.FavoriteRepository
@@ -22,14 +23,16 @@ data class VodState(
     val currentPage: Int = 1,
     val totalItems: Int = 0,
     val hasMore: Boolean = false,
-    val selectedVod: VodItem? = null
+    val selectedVod: VodItem? = null,
+    val favoriteCategoryIds: Set<String> = emptySet()
 )
 
 class VodViewModel(
     private val vodRepository: VodRepository,
     private val favoriteRepository: FavoriteRepository,
     private val downloadRepository: DownloadRepository,
-    private val authManager: StalkerAuthManager
+    private val authManager: StalkerAuthManager,
+    private val preferences: UserPreferences
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(VodState())
@@ -38,6 +41,15 @@ class VodViewModel(
     init {
         loadCategories()
         loadVodList()
+        viewModelScope.launch {
+            preferences.favoriteCategories.collect { favs ->
+                _state.update { it.copy(favoriteCategoryIds = favs) }
+            }
+        }
+    }
+
+    fun toggleFavoriteCategory(categoryId: String) {
+        viewModelScope.launch { preferences.toggleFavoriteCategory(categoryId) }
     }
 
     private fun loadCategories() {
@@ -45,7 +57,8 @@ class VodViewModel(
         viewModelScope.launch {
             vodRepository.getCategories(portal.url)
                 .onSuccess { cats ->
-                    _state.update { it.copy(categories = cats) }
+                    val favsCategory = VodCategory(id = "favs", title = "★ Favorites", alias = "favorites")
+                    _state.update { it.copy(categories = listOf(cats.first(), favsCategory) + cats.drop(1)) }
                 }
         }
     }
@@ -77,7 +90,32 @@ class VodViewModel(
 
     fun selectCategory(categoryId: String) {
         _state.update { it.copy(selectedCategory = categoryId, items = emptyList()) }
-        loadVodList(categoryId, 1)
+        if (categoryId == "favs") {
+            loadFavoriteVod()
+        } else {
+            loadVodList(categoryId, 1)
+        }
+    }
+
+    private fun loadFavoriteVod() {
+        val portal = authManager.currentPortal ?: return
+        _state.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            favoriteRepository.getFavoriteVod(portal.id).first().let { favorites ->
+                val items = favorites.map { fav ->
+                    VodItem(
+                        id = fav.channelId,
+                        name = fav.name,
+                        cmd = fav.cmd,
+                        logo = fav.logo,
+                        isFavorite = true
+                    )
+                }
+                _state.update {
+                    it.copy(items = items, isLoading = false, hasMore = false, totalItems = items.size)
+                }
+            }
+        }
     }
 
     fun loadMore() {
@@ -125,11 +163,12 @@ class VodViewModel(
         private val vodRepository: VodRepository,
         private val favoriteRepository: FavoriteRepository,
         private val downloadRepository: DownloadRepository,
-        private val authManager: StalkerAuthManager
+        private val authManager: StalkerAuthManager,
+        private val preferences: UserPreferences
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return VodViewModel(vodRepository, favoriteRepository, downloadRepository, authManager) as T
+            return VodViewModel(vodRepository, favoriteRepository, downloadRepository, authManager, preferences) as T
         }
     }
 }

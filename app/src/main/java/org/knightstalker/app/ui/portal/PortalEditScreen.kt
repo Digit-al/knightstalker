@@ -21,9 +21,9 @@ fun PortalEditScreen(
     onSave: (name: String, url: String, mac: String, id: Long) -> Unit,
     onBack: () -> Unit
 ) {
-    var name by remember { mutableStateOf(portal?.name ?: "") }
-    var url by remember { mutableStateOf(portal?.url ?: "") }
-    var mac by remember { mutableStateOf(portal?.macAddress ?: "00:1A:79:") }
+    var name by remember(portal?.id) { mutableStateOf(portal?.name ?: "") }
+    var url by remember(portal?.id) { mutableStateOf(portal?.url ?: "") }
+    var mac by remember(portal?.id) { mutableStateOf(portal?.macAddress ?: "00:1A:79:") }
 
     val isValid = url.isNotBlank() && mac.matches(Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"))
 

@@ -16,7 +16,8 @@ data class PortalListState(
     val portals: List<Portal> = emptyList(),
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     val error: String? = null,
-    val connectedPortalId: Long? = null
+    val connectedPortalId: Long? = null,
+    val autoConnectTriggered: Boolean = false
 )
 
 class PortalViewModel(
@@ -47,6 +48,16 @@ class PortalViewModel(
         viewModelScope.launch {
             authManager.errorMessage.collect { err ->
                 _state.update { it.copy(error = err) }
+            }
+        }
+        // Auto-connect to last used portal
+        viewModelScope.launch {
+            val lastId = preferences.lastPortalId.first()
+            if (lastId != null && lastId > 0 && authManager.connectionState.value == ConnectionState.DISCONNECTED) {
+                portalRepository.portals.first().find { it.id == lastId }?.let { portal ->
+                    _state.update { it.copy(autoConnectTriggered = true) }
+                    connect(portal)
+                }
             }
         }
     }

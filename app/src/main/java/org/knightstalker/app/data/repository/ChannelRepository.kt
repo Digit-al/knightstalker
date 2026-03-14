@@ -15,8 +15,9 @@ class ChannelRepository(
     suspend fun getCategories(baseUrl: String): Result<List<ChannelCategory>> {
         return api.getGenres(baseUrl).map { response ->
             val genres = response.js ?: emptyList()
+            val mapped = genres.map { it.toDomain() }
             val all = ChannelCategory(id = "*", title = "All", alias = "all")
-            listOf(all) + genres.map { it.toDomain() }
+            listOf(all) + mapped.filter { it.title.lowercase() != "all" }
         }
     }
 

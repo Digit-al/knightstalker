@@ -25,15 +25,17 @@ class HistoryViewModel(
     val state: StateFlow<HistoryState> = _state.asStateFlow()
 
     init {
-        val portal = authManager.currentPortal ?: return
-        viewModelScope.launch {
-            historyRepository.getContinueWatching(portal.id).collect { items ->
-                _state.update { it.copy(continueWatching = items) }
+        val portal = authManager.currentPortal
+        if (portal != null) {
+            viewModelScope.launch {
+                historyRepository.getContinueWatching(portal.id).collect { items ->
+                    _state.update { it.copy(continueWatching = items) }
+                }
             }
-        }
-        viewModelScope.launch {
-            historyRepository.getHistory(portal.id).collect { items ->
-                _state.update { it.copy(allHistory = items) }
+            viewModelScope.launch {
+                historyRepository.getHistory(portal.id).collect { items ->
+                    _state.update { it.copy(allHistory = items) }
+                }
             }
         }
     }

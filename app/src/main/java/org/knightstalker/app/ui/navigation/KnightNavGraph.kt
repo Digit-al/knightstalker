@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.ui.navigation
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -51,11 +50,11 @@ sealed class NavRoute(val route: String) {
         fun createRoute(id: Long? = null) = if (id != null) "portals/edit?id=$id" else "portals/edit"
     }
     data object Home : NavRoute("home")
-    data object Player : NavRoute("player/{type}/{cmd}/{name}") {
+    data object Player : NavRoute("player/{type}?cmd={cmd}&name={name}") {
         fun createRoute(type: String, cmd: String, name: String): String {
             val encodedCmd = URLEncoder.encode(cmd, "UTF-8")
             val encodedName = URLEncoder.encode(name, "UTF-8")
-            return "player/$type/$encodedCmd/$encodedName"
+            return "player/$type?cmd=$encodedCmd&name=$encodedName"
         }
     }
 }
@@ -63,10 +62,10 @@ sealed class NavRoute(val route: String) {
 data class BottomNavItem(val label: String, val icon: ImageVector, val route: String)
 
 private val bottomNavItems = listOf(
-    BottomNavItem("Live TV", Icons.Default.LiveTv, "livetv"),
-    BottomNavItem("Guide", Icons.Default.CalendarMonth, "epg"),
     BottomNavItem("Movies", Icons.Default.Movie, "vod"),
+    BottomNavItem("Live TV", Icons.Default.LiveTv, "livetv"),
     BottomNavItem("History", Icons.Default.History, "history"),
+    BottomNavItem("Guide", Icons.Default.CalendarMonth, "epg"),
     BottomNavItem("Favorites", Icons.Default.Favorite, "favorites"),
     BottomNavItem("Search", Icons.Default.Search, "search"),
     BottomNavItem("Settings", Icons.Default.Settings, "settings")
@@ -126,10 +125,10 @@ fun KnightNavGraph() {
 
         // Player
         composable(
-            route = NavRoute.Player.route,
+            route = "player/{type}?cmd={cmd}&name={name}",
             arguments = listOf(
                 navArgument("type") { type = NavType.StringType },
-                navArgument("cmd") { type = NavType.StringType },
+                navArgument("cmd") { type = NavType.StringType; defaultValue = "" },
                 navArgument("name") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
@@ -195,10 +194,10 @@ private fun HomeScreen(
         }
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
-            NavHost(navController = homeNavController, startDestination = "livetv") {
+            NavHost(navController = homeNavController, startDestination = "vod") {
                 composable("livetv") {
                     val vm: LiveTvViewModel = viewModel(
-                        factory = LiveTvViewModel.Factory(module.channelRepository, module.epgRepository, module.favoriteRepository, module.authManager)
+                        factory = LiveTvViewModel.Factory(module.channelRepository, module.epgRepository, module.favoriteRepository, module.authManager, module.userPreferences)
                     )
                     LiveTvScreen(
                         viewModel = vm,
@@ -222,7 +221,7 @@ private fun HomeScreen(
 
                 composable("vod") {
                     val vm: VodViewModel = viewModel(
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences)
                     )
                     VodScreen(
                         viewModel = vm,

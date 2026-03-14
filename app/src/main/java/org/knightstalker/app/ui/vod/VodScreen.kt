@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.ui.vod
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -41,6 +42,7 @@ fun VodScreen(
 
     // Detail overlay
     state.selectedVod?.let { vod ->
+        BackHandler { viewModel.selectVod(null) }
         VodDetailScreen(
             vod = vod,
             onPlay = { onPlayVod(vod.cmd) },
@@ -56,7 +58,9 @@ fun VodScreen(
             CategorySidebar(
                 categories = state.categories.map { it.id to it.title },
                 selectedId = state.selectedCategory,
-                onSelect = { viewModel.selectCategory(it) }
+                onSelect = { viewModel.selectCategory(it) },
+                favoriteIds = state.favoriteCategoryIds,
+                onToggleFavorite = { viewModel.toggleFavoriteCategory(it) }
             )
         }
 

@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import org.knightstalker.app.data.local.prefs.UserPreferences
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.ChannelRepository
 import org.knightstalker.app.data.repository.EpgRepository
@@ -21,14 +22,16 @@ data class LiveTvState(
     val error: String? = null,
     val currentPage: Int = 1,
     val totalItems: Int = 0,
-    val hasMore: Boolean = false
+    val hasMore: Boolean = false,
+    val favoriteCategoryIds: Set<String> = emptySet()
 )
 
 class LiveTvViewModel(
     private val channelRepository: ChannelRepository,
     private val epgRepository: EpgRepository,
     private val favoriteRepository: FavoriteRepository,
-    private val authManager: StalkerAuthManager
+    private val authManager: StalkerAuthManager,
+    private val preferences: UserPreferences
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(LiveTvState())
@@ -37,6 +40,15 @@ class LiveTvViewModel(
     init {
         loadCategories()
         loadChannels()
+        viewModelScope.launch {
+            preferences.favoriteCategories.collect { favs ->
+                _state.update { it.copy(favoriteCategoryIds = favs) }
+            }
+        }
+    }
+
+    fun toggleFavoriteCategory(categoryId: String) {
+        viewModelScope.launch { preferences.toggleFavoriteCategory(categoryId) }
     }
 
     private fun loadCategories() {
@@ -44,7 +56,8 @@ class LiveTvViewModel(
         viewModelScope.launch {
             channelRepository.getCategories(portal.url)
                 .onSuccess { cats ->
-                    _state.update { it.copy(categories = cats) }
+                    val favsCategory = ChannelCategory(id = "favs", title = "★ Favorites", alias = "favorites")
+                    _state.update { it.copy(categories = listOf(cats.first(), favsCategory) + cats.drop(1)) }
                 }
         }
     }
@@ -86,7 +99,40 @@ class LiveTvViewModel(
 
     fun selectCategory(categoryId: String) {
         _state.update { it.copy(selectedCategory = categoryId, channels = emptyList()) }
-        loadChannels(categoryId, 1)
+        if (categoryId == "favs") {
+            loadFavoriteChannels()
+        } else {
+            loadChannels(categoryId, 1)
+        }
+    }
+
+    private fun loadFavoriteChannels() {
+        val portal = authManager.currentPortal ?: return
+        _state.update { it.copy(isLoading = true, error = null) }
+        viewModelScope.launch {
+            favoriteRepository.getFavoriteChannels(portal.id).first().let { favorites ->
+                val channels = favorites.map { fav ->
+                    Channel(
+                        id = fav.channelId,
+                        name = fav.name,
+                        number = 0,
+                        cmd = fav.cmd,
+                        logo = fav.logo,
+                        genre = null,
+                        genreId = "",
+                        isFavorite = true
+                    )
+                }
+                _state.update {
+                    it.copy(
+                        channels = channels,
+                        isLoading = false,
+                        hasMore = false,
+                        totalItems = channels.size
+                    )
+                }
+            }
+        }
     }
 
     fun loadMore() {
@@ -113,11 +159,12 @@ class LiveTvViewModel(
         private val channelRepository: ChannelRepository,
         private val epgRepository: EpgRepository,
         private val favoriteRepository: FavoriteRepository,
-        private val authManager: StalkerAuthManager
+        private val authManager: StalkerAuthManager,
+        private val preferences: UserPreferences
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return LiveTvViewModel(channelRepository, epgRepository, favoriteRepository, authManager) as T
+            return LiveTvViewModel(channelRepository, epgRepository, favoriteRepository, authManager, preferences) as T
         }
     }
 }

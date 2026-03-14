@@ -74,7 +74,7 @@ fun SearchScreen(
                             ChannelCard(
                                 channel = channel,
                                 onClick = { onChannelClick(channel.id, channel.cmd) },
-                                onLongClick = {}
+                                onToggleFavorite = {}
                             )
                         }
                     }

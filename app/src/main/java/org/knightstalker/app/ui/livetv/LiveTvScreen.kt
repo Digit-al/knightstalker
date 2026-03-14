@@ -44,7 +44,9 @@ fun LiveTvScreen(
             CategorySidebar(
                 categories = state.categories.map { it.id to it.title },
                 selectedId = state.selectedCategory,
-                onSelect = { viewModel.selectCategory(it) }
+                onSelect = { viewModel.selectCategory(it) },
+                favoriteIds = state.favoriteCategoryIds,
+                onToggleFavorite = { viewModel.toggleFavoriteCategory(it) }
             )
         }
 
@@ -91,7 +93,7 @@ fun LiveTvScreen(
                             ChannelCard(
                                 channel = channel,
                                 onClick = { onChannelClick(channel.id, channel.cmd) },
-                                onLongClick = { viewModel.toggleFavorite(channel) }
+                                onToggleFavorite = { viewModel.toggleFavorite(channel) }
                             )
                         }
                         if (state.isLoading) {

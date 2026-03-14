@@ -15,8 +15,9 @@ class VodRepository(
     suspend fun getCategories(baseUrl: String): Result<List<VodCategory>> {
         return api.getVodCategories(baseUrl).map { response ->
             val categories = response.js ?: emptyList()
+            val mapped = categories.map { it.toDomain() }
             val all = VodCategory(id = "*", title = "All", alias = "all")
-            listOf(all) + categories.map { it.toDomain() }
+            listOf(all) + mapped.filter { it.title.lowercase() != "all" }
         }
     }
 
