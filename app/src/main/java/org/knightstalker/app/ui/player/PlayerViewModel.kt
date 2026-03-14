@@ -9,13 +9,17 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.ChannelRepository
 import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.DownloadStatus
 import org.knightstalker.app.data.repository.VodRepository
+import org.knightstalker.app.data.repository.WatchHistoryRepository
 
 data class PlayerState(
     val isPlaying: Boolean = false,
@@ -27,7 +31,9 @@ data class PlayerState(
     val downloadProgress: Float = 0f,
     val downloadComplete: Boolean = false,
     val downloadError: String? = null,
-    val currentStreamUrl: String? = null
+    val currentStreamUrl: String? = null,
+    val resumePositionMs: Long = 0,
+    val showResumePrompt: Boolean = false
 )
 
 class PlayerViewModel(
@@ -35,11 +41,18 @@ class PlayerViewModel(
     private val channelRepository: ChannelRepository,
     private val vodRepository: VodRepository,
     private val authManager: StalkerAuthManager,
-    private val downloadRepository: DownloadRepository
+    private val downloadRepository: DownloadRepository,
+    private val watchHistoryRepository: WatchHistoryRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
+
+    private var currentItemId: String = ""
+    private var currentCmd: String = ""
+    private var currentType: String = ""
+    private var currentLogo: String? = null
+    private var positionSaveJob: Job? = null
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
         .build()
@@ -47,11 +60,17 @@ class PlayerViewModel(
             addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     _state.update { it.copy(isPlaying = isPlaying) }
+                    if (!isPlaying) {
+                        saveCurrentPosition()
+                    }
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     _state.update {
                         it.copy(isBuffering = playbackState == Player.STATE_BUFFERING)
+                    }
+                    if (playbackState == Player.STATE_ENDED) {
+                        markFinished()
                     }
                 }
 
@@ -77,16 +96,28 @@ class PlayerViewModel(
                 }
             }
         }
+        // Periodically save position while playing
+        startPositionTracker()
     }
 
     fun playChannel(cmd: String, name: String = "") {
         val portal = authManager.currentPortal ?: return
+        currentItemId = cmd.hashCode().toString()
+        currentCmd = cmd
+        currentType = "itv"
         _state.update { it.copy(channelName = name, error = null, isBuffering = true) }
 
         viewModelScope.launch {
             channelRepository.createLink(portal.url, cmd)
                 .onSuccess { url ->
                     _state.update { it.copy(currentStreamUrl = url) }
+                    // Check for resume position
+                    val history = watchHistoryRepository.getEntry(currentItemId, portal.id)
+                    if (history != null && !history.isFinished && history.positionMs > 5000) {
+                        _state.update {
+                            it.copy(resumePositionMs = history.positionMs, showResumePrompt = true)
+                        }
+                    }
                     player.setMediaItem(MediaItem.fromUri(url))
                     player.prepare()
                     player.play()
@@ -99,12 +130,22 @@ class PlayerViewModel(
 
     fun playVod(cmd: String, name: String = "") {
         val portal = authManager.currentPortal ?: return
+        currentItemId = cmd.hashCode().toString()
+        currentCmd = cmd
+        currentType = "vod"
         _state.update { it.copy(channelName = name, error = null, isBuffering = true) }
 
         viewModelScope.launch {
             vodRepository.createLink(portal.url, cmd)
                 .onSuccess { url ->
                     _state.update { it.copy(currentStreamUrl = url) }
+                    // Check for resume position
+                    val history = watchHistoryRepository.getEntry(currentItemId, portal.id)
+                    if (history != null && !history.isFinished && history.positionMs > 5000) {
+                        _state.update {
+                            it.copy(resumePositionMs = history.positionMs, showResumePrompt = true)
+                        }
+                    }
                     player.setMediaItem(MediaItem.fromUri(url))
                     player.prepare()
                     player.play()
@@ -113,6 +154,19 @@ class PlayerViewModel(
                     _state.update { it.copy(error = e.message, isBuffering = false) }
                 }
         }
+    }
+
+    fun resumeFromHistory() {
+        val pos = _state.value.resumePositionMs
+        if (pos > 0) {
+            player.seekTo(pos)
+        }
+        _state.update { it.copy(showResumePrompt = false) }
+    }
+
+    fun startFromBeginning() {
+        player.seekTo(0)
+        _state.update { it.copy(showResumePrompt = false) }
     }
 
     fun downloadCurrent() {
@@ -151,7 +205,49 @@ class PlayerViewModel(
         _state.update { it.copy(error = null) }
     }
 
+    private fun startPositionTracker() {
+        positionSaveJob = viewModelScope.launch {
+            while (isActive) {
+                delay(10_000) // Save every 10 seconds
+                if (player.isPlaying && player.currentPosition > 0) {
+                    saveCurrentPosition()
+                }
+            }
+        }
+    }
+
+    private fun saveCurrentPosition() {
+        val portal = authManager.currentPortal ?: return
+        if (currentItemId.isEmpty()) return
+        val position = player.currentPosition
+        val duration = player.duration.coerceAtLeast(0)
+        if (position <= 0) return
+
+        viewModelScope.launch {
+            watchHistoryRepository.savePosition(
+                itemId = currentItemId,
+                portalId = portal.id,
+                name = _state.value.channelName,
+                logo = currentLogo,
+                cmd = currentCmd,
+                type = currentType,
+                positionMs = position,
+                durationMs = duration
+            )
+        }
+    }
+
+    private fun markFinished() {
+        val portal = authManager.currentPortal ?: return
+        if (currentItemId.isEmpty()) return
+        viewModelScope.launch {
+            watchHistoryRepository.markFinished(currentItemId, portal.id)
+        }
+    }
+
     override fun onCleared() {
+        saveCurrentPosition()
+        positionSaveJob?.cancel()
         player.release()
         super.onCleared()
     }
@@ -161,11 +257,12 @@ class PlayerViewModel(
         private val channelRepository: ChannelRepository,
         private val vodRepository: VodRepository,
         private val authManager: StalkerAuthManager,
-        private val downloadRepository: DownloadRepository
+        private val downloadRepository: DownloadRepository,
+        private val watchHistoryRepository: WatchHistoryRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return PlayerViewModel(context, channelRepository, vodRepository, authManager, downloadRepository) as T
+            return PlayerViewModel(context, channelRepository, vodRepository, authManager, downloadRepository, watchHistoryRepository) as T
         }
     }
 }

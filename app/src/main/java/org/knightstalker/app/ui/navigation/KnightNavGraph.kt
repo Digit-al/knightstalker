@@ -23,6 +23,8 @@ import org.knightstalker.app.ui.epg.EpgScreen
 import org.knightstalker.app.ui.epg.EpgViewModel
 import org.knightstalker.app.ui.favorites.FavoritesScreen
 import org.knightstalker.app.ui.favorites.FavoritesViewModel
+import org.knightstalker.app.ui.history.HistoryScreen
+import org.knightstalker.app.ui.history.HistoryViewModel
 import org.knightstalker.app.ui.livetv.LiveTvScreen
 import org.knightstalker.app.ui.livetv.LiveTvViewModel
 import org.knightstalker.app.ui.player.PlayerScreen
@@ -64,6 +66,7 @@ private val bottomNavItems = listOf(
     BottomNavItem("Live TV", Icons.Default.LiveTv, "livetv"),
     BottomNavItem("Guide", Icons.Default.CalendarMonth, "epg"),
     BottomNavItem("Movies", Icons.Default.Movie, "vod"),
+    BottomNavItem("History", Icons.Default.History, "history"),
     BottomNavItem("Favorites", Icons.Default.Favorite, "favorites"),
     BottomNavItem("Search", Icons.Default.Search, "search"),
     BottomNavItem("Settings", Icons.Default.Settings, "settings")
@@ -134,7 +137,7 @@ fun KnightNavGraph() {
             val cmd = URLDecoder.decode(entry.arguments?.getString("cmd") ?: "", "UTF-8")
             val name = URLDecoder.decode(entry.arguments?.getString("name") ?: "", "UTF-8")
             val vm: PlayerViewModel = viewModel(
-                factory = PlayerViewModel.Factory(context, module.channelRepository, module.vodRepository, module.authManager, module.downloadRepository)
+                factory = PlayerViewModel.Factory(context, module.channelRepository, module.vodRepository, module.authManager, module.downloadRepository, module.watchHistoryRepository)
             )
             PlayerScreen(
                 viewModel = vm,
@@ -228,6 +231,18 @@ private fun HomeScreen(
                         },
                         onPlayVod = { cmd ->
                             navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
+                        }
+                    )
+                }
+
+                composable("history") {
+                    val vm: HistoryViewModel = viewModel(
+                        factory = HistoryViewModel.Factory(module.watchHistoryRepository, module.authManager)
+                    )
+                    HistoryScreen(
+                        viewModel = vm,
+                        onResume = { type, cmd, name ->
+                            navController.navigate(NavRoute.Player.createRoute(type, cmd, name))
                         }
                     )
                 }

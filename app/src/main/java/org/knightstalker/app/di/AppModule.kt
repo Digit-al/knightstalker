@@ -68,6 +68,10 @@ class AppModule(private val context: Context) {
         FavoriteRepository(database.favoriteDao())
     }
 
+    val watchHistoryRepository: WatchHistoryRepository by lazy {
+        WatchHistoryRepository(database.watchHistoryDao())
+    }
+
     val downloadRepository: DownloadRepository by lazy {
         DownloadRepository(context)
     }

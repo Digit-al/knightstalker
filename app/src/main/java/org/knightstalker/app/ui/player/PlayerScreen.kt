@@ -74,6 +74,29 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
+        // Resume prompt
+        if (state.showResumePrompt) {
+            AlertDialog(
+                onDismissRequest = { viewModel.startFromBeginning() },
+                title = { Text("Resume Playback") },
+                text = {
+                    val minutes = state.resumePositionMs / 60000
+                    val seconds = (state.resumePositionMs % 60000) / 1000
+                    Text("Resume from ${minutes}m ${seconds}s?")
+                },
+                confirmButton = {
+                    TextButton(onClick = { viewModel.resumeFromHistory() }) {
+                        Text("Resume", color = Accent)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.startFromBeginning() }) {
+                        Text("Start Over")
+                    }
+                }
+            )
+        }
+
         // Buffering indicator
         if (state.isBuffering) {
             CircularProgressIndicator(
