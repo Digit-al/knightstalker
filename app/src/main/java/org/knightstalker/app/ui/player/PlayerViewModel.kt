@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.ChannelRepository
+import org.knightstalker.app.data.repository.DownloadRepository
+import org.knightstalker.app.data.repository.DownloadStatus
 import org.knightstalker.app.data.repository.VodRepository
 
 data class PlayerState(
@@ -20,14 +22,20 @@ data class PlayerState(
     val isBuffering: Boolean = true,
     val error: String? = null,
     val channelName: String = "",
-    val showControls: Boolean = true
+    val showControls: Boolean = true,
+    val isDownloading: Boolean = false,
+    val downloadProgress: Float = 0f,
+    val downloadComplete: Boolean = false,
+    val downloadError: String? = null,
+    val currentStreamUrl: String? = null
 )
 
 class PlayerViewModel(
     context: Context,
     private val channelRepository: ChannelRepository,
     private val vodRepository: VodRepository,
-    private val authManager: StalkerAuthManager
+    private val authManager: StalkerAuthManager,
+    private val downloadRepository: DownloadRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PlayerState())
@@ -53,6 +61,24 @@ class PlayerViewModel(
             })
         }
 
+    init {
+        viewModelScope.launch {
+            downloadRepository.downloads.collect { downloads ->
+                val current = downloads.find { it.name == _state.value.channelName }
+                if (current != null) {
+                    _state.update {
+                        it.copy(
+                            isDownloading = current.status == DownloadStatus.DOWNLOADING,
+                            downloadProgress = current.progress,
+                            downloadComplete = current.status == DownloadStatus.COMPLETED,
+                            downloadError = current.error
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun playChannel(cmd: String, name: String = "") {
         val portal = authManager.currentPortal ?: return
         _state.update { it.copy(channelName = name, error = null, isBuffering = true) }
@@ -60,6 +86,7 @@ class PlayerViewModel(
         viewModelScope.launch {
             channelRepository.createLink(portal.url, cmd)
                 .onSuccess { url ->
+                    _state.update { it.copy(currentStreamUrl = url) }
                     player.setMediaItem(MediaItem.fromUri(url))
                     player.prepare()
                     player.play()
@@ -77,6 +104,7 @@ class PlayerViewModel(
         viewModelScope.launch {
             vodRepository.createLink(portal.url, cmd)
                 .onSuccess { url ->
+                    _state.update { it.copy(currentStreamUrl = url) }
                     player.setMediaItem(MediaItem.fromUri(url))
                     player.prepare()
                     player.play()
@@ -84,6 +112,20 @@ class PlayerViewModel(
                 .onFailure { e ->
                     _state.update { it.copy(error = e.message, isBuffering = false) }
                 }
+        }
+    }
+
+    fun downloadCurrent() {
+        val url = _state.value.currentStreamUrl ?: return
+        val name = _state.value.channelName.ifEmpty { "download_${System.currentTimeMillis()}" }
+        _state.update { it.copy(isDownloading = true, downloadError = null, downloadComplete = false) }
+
+        viewModelScope.launch {
+            downloadRepository.download(
+                id = "${name}_${System.currentTimeMillis()}",
+                name = name,
+                streamUrl = url
+            )
         }
     }
 
@@ -118,11 +160,12 @@ class PlayerViewModel(
         private val context: Context,
         private val channelRepository: ChannelRepository,
         private val vodRepository: VodRepository,
-        private val authManager: StalkerAuthManager
+        private val authManager: StalkerAuthManager,
+        private val downloadRepository: DownloadRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return PlayerViewModel(context, channelRepository, vodRepository, authManager) as T
+            return PlayerViewModel(context, channelRepository, vodRepository, authManager, downloadRepository) as T
         }
     }
 }

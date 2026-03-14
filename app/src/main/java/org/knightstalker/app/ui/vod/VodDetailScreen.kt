@@ -24,6 +24,7 @@ import org.knightstalker.app.ui.theme.*
 fun VodDetailScreen(
     vod: VodItem,
     onPlay: () -> Unit,
+    onDownload: () -> Unit = {},
     onToggleFavorite: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -113,6 +114,14 @@ fun VodDetailScreen(
                         Icon(Icons.Default.PlayArrow, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Play")
+                    }
+                    OutlinedButton(
+                        onClick = onDownload,
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, tint = TextSecondary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Download")
                     }
                     OutlinedButton(
                         onClick = onToggleFavorite,

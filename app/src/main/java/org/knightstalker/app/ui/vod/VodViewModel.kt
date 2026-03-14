@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.FavoriteRepository
 import org.knightstalker.app.data.repository.VodRepository
 import org.knightstalker.app.domain.model.VodCategory
@@ -27,6 +28,7 @@ data class VodState(
 class VodViewModel(
     private val vodRepository: VodRepository,
     private val favoriteRepository: FavoriteRepository,
+    private val downloadRepository: DownloadRepository,
     private val authManager: StalkerAuthManager
 ) : ViewModel() {
 
@@ -105,14 +107,29 @@ class VodViewModel(
         }
     }
 
+    fun downloadVod(vod: VodItem) {
+        val portal = authManager.currentPortal ?: return
+        viewModelScope.launch {
+            vodRepository.createLink(portal.url, vod.cmd)
+                .onSuccess { url ->
+                    downloadRepository.download(
+                        id = "vod_${vod.id}_${System.currentTimeMillis()}",
+                        name = vod.name,
+                        streamUrl = url
+                    )
+                }
+        }
+    }
+
     class Factory(
         private val vodRepository: VodRepository,
         private val favoriteRepository: FavoriteRepository,
+        private val downloadRepository: DownloadRepository,
         private val authManager: StalkerAuthManager
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return VodViewModel(vodRepository, favoriteRepository, authManager) as T
+            return VodViewModel(vodRepository, favoriteRepository, downloadRepository, authManager) as T
         }
     }
 }

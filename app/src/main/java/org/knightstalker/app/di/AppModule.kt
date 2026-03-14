@@ -13,7 +13,7 @@ import org.knightstalker.app.data.remote.interceptor.StalkerAuthInterceptor
 import org.knightstalker.app.data.repository.*
 import java.util.concurrent.TimeUnit
 
-class AppModule(context: Context) {
+class AppModule(private val context: Context) {
 
     val json: Json = Json {
         ignoreUnknownKeys = true
@@ -66,5 +66,9 @@ class AppModule(context: Context) {
 
     val favoriteRepository: FavoriteRepository by lazy {
         FavoriteRepository(database.favoriteDao())
+    }
+
+    val downloadRepository: DownloadRepository by lazy {
+        DownloadRepository(context)
     }
 }

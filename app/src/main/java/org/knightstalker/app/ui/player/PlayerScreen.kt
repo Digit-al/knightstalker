@@ -17,13 +17,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import org.knightstalker.app.ui.theme.Accent
+import org.knightstalker.app.ui.theme.SuccessGreen
 import org.knightstalker.app.ui.theme.TextPrimary
+import org.knightstalker.app.ui.theme.TextSecondary
 
 @Composable
 fun PlayerScreen(
@@ -129,8 +130,68 @@ fun PlayerScreen(
                     Text(
                         text = state.channelName,
                         style = MaterialTheme.typography.titleLarge,
-                        color = TextPrimary
+                        color = TextPrimary,
+                        modifier = Modifier.weight(1f)
                     )
+
+                    // Download button
+                    if (state.currentStreamUrl != null) {
+                        when {
+                            state.downloadComplete -> {
+                                IconButton(onClick = {}) {
+                                    Icon(
+                                        Icons.Default.DownloadDone,
+                                        contentDescription = "Downloaded",
+                                        tint = SuccessGreen,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                            state.isDownloading -> {
+                                Box(contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(
+                                        progress = { state.downloadProgress },
+                                        modifier = Modifier.size(36.dp),
+                                        color = Accent,
+                                        strokeWidth = 3.dp,
+                                    )
+                                    Text(
+                                        "${(state.downloadProgress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextPrimary
+                                    )
+                                }
+                            }
+                            else -> {
+                                IconButton(onClick = { viewModel.downloadCurrent() }) {
+                                    Icon(
+                                        Icons.Default.Download,
+                                        contentDescription = "Download",
+                                        tint = TextPrimary,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Download error toast
+                state.downloadError?.let { err ->
+                    Card(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 72.dp),
+                        colors = CardDefaults.cardColors(containerColor = Accent.copy(alpha = 0.9f)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            "Download failed: $err",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            color = TextPrimary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
 
                 // Center controls

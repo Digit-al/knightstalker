@@ -44,6 +44,7 @@ fun VodScreen(
         VodDetailScreen(
             vod = vod,
             onPlay = { onPlayVod(vod.cmd) },
+            onDownload = { viewModel.downloadVod(vod) },
             onToggleFavorite = { viewModel.toggleFavorite(vod) },
             onDismiss = { viewModel.selectVod(null) }
         )

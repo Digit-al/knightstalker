@@ -134,7 +134,7 @@ fun KnightNavGraph() {
             val cmd = URLDecoder.decode(entry.arguments?.getString("cmd") ?: "", "UTF-8")
             val name = URLDecoder.decode(entry.arguments?.getString("name") ?: "", "UTF-8")
             val vm: PlayerViewModel = viewModel(
-                factory = PlayerViewModel.Factory(context, module.channelRepository, module.vodRepository, module.authManager)
+                factory = PlayerViewModel.Factory(context, module.channelRepository, module.vodRepository, module.authManager, module.downloadRepository)
             )
             PlayerScreen(
                 viewModel = vm,
@@ -219,7 +219,7 @@ private fun HomeScreen(
 
                 composable("vod") {
                     val vm: VodViewModel = viewModel(
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.authManager)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager)
                     )
                     VodScreen(
                         viewModel = vm,
@@ -264,7 +264,7 @@ private fun HomeScreen(
 
                 composable("settings") {
                     val vm: SettingsViewModel = viewModel(
-                        factory = SettingsViewModel.Factory(module.userPreferences)
+                        factory = SettingsViewModel.Factory(module.userPreferences, module.authManager, module.portalRepository)
                     )
                     SettingsScreen(
                         viewModel = vm,
