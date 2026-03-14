@@ -1,0 +1,17 @@
+KnightStalker is a free and open-source Stalker IPTV client for Android.
+
+Features:
+* Live TV with EPG (Electronic Program Guide)
+* Video on Demand (VOD) browsing and playback
+* Multiple portal support with auto-probing URL resolution
+* Channel favorites and watch history with resume playback
+* Search across channels and movies
+* Picture-in-Picture support
+* Portrait and landscape orientation support
+* Android TV compatible (leanback launcher)
+* Media download support
+* Material Design 3 interface with dark theme
+
+KnightStalker connects to Stalker middleware portals to stream IPTV content. You need a valid portal URL and MAC address from your IPTV provider to use this app.
+
+This app does not include any tracking, analytics, or advertisements.

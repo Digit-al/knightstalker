@@ -1,0 +1,8 @@
+Initial release of KnightStalker.
+
+* Live TV and VOD playback via Stalker middleware
+* EPG (Electronic Program Guide) support
+* Multiple portal management
+* Favorites and watch history with resume
+* Search, downloads, and Picture-in-Picture
+* Portrait and landscape orientation support
