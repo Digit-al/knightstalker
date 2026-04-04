@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.knightstalker.app.data.local.prefs.UserPreferences
+import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.FavoriteRepository
@@ -39,8 +40,14 @@ class VodViewModel(
     val state: StateFlow<VodState> = _state.asStateFlow()
 
     init {
-        loadCategories()
-        loadVodList()
+        viewModelScope.launch {
+            authManager.connectionState.collect { connState ->
+                if (connState == ConnectionState.CONNECTED && _state.value.categories.isEmpty()) {
+                    loadCategories()
+                    loadVodList()
+                }
+            }
+        }
         viewModelScope.launch {
             preferences.favoriteCategories.collect { favs ->
                 _state.update { it.copy(favoriteCategoryIds = favs) }
@@ -150,7 +157,7 @@ class VodViewModel(
         viewModelScope.launch {
             vodRepository.createLink(portal.url, vod.cmd)
                 .onSuccess { url ->
-                    downloadRepository.download(
+                    downloadRepository.startDownload(
                         id = "vod_${vod.id}_${System.currentTimeMillis()}",
                         name = vod.name,
                         streamUrl = url

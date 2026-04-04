@@ -1,18 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.ui.portal
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import org.knightstalker.app.domain.model.Portal
 import org.knightstalker.app.ui.theme.*
+
+@Serializable
+private data class QrPortalData(
+    val n: String = "",
+    val u: String = "",
+    val m: String = ""
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -24,6 +37,28 @@ fun PortalEditScreen(
     var name by remember(portal?.id) { mutableStateOf(portal?.name ?: "") }
     var url by remember(portal?.id) { mutableStateOf(portal?.url ?: "") }
     var mac by remember(portal?.id) { mutableStateOf(portal?.macAddress ?: "00:1A:79:") }
+    var scanError by remember { mutableStateOf<String?>(null) }
+
+    val json = remember { Json { ignoreUnknownKeys = true } }
+
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents
+        if (contents != null) {
+            try {
+                val data = json.decodeFromString<QrPortalData>(contents)
+                if (data.u.isBlank()) {
+                    scanError = "Invalid QR: missing URL"
+                } else {
+                    name = data.n
+                    url = data.u
+                    mac = data.m.ifBlank { mac }
+                    scanError = null
+                }
+            } catch (_: Exception) {
+                scanError = "Invalid QR code format"
+            }
+        }
+    }
 
     val isValid = url.isNotBlank() && mac.matches(Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"))
 
@@ -34,6 +69,28 @@ fun PortalEditScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            scanError = null
+                            val options = ScanOptions().apply {
+                                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                setPrompt("Scan a KnightStalker QR code")
+                                setBeepEnabled(false)
+                                setOrientationLocked(false)
+                            }
+                            scanLauncher.launch(options)
+                        },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.QrCodeScanner,
+                            contentDescription = "Scan QR code",
+                            tint = TextPrimary,
+                            modifier = Modifier.size(32.dp)
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -103,6 +160,10 @@ fun PortalEditScreen(
                     Text("Format: XX:XX:XX:XX:XX:XX", color = TextSecondary)
                 }
             )
+
+            scanError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = Accent)
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 

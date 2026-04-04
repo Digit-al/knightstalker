@@ -31,6 +31,7 @@ import org.knightstalker.app.ui.player.PlayerViewModel
 import org.knightstalker.app.ui.portal.PortalEditScreen
 import org.knightstalker.app.ui.portal.PortalListScreen
 import org.knightstalker.app.ui.portal.PortalViewModel
+import org.knightstalker.app.ui.downloads.DownloadsScreen
 import org.knightstalker.app.ui.search.SearchScreen
 import org.knightstalker.app.ui.search.SearchViewModel
 import org.knightstalker.app.ui.settings.SettingsScreen
@@ -68,6 +69,7 @@ private val bottomNavItems = listOf(
     BottomNavItem("Guide", Icons.Default.CalendarMonth, "epg"),
     BottomNavItem("Favorites", Icons.Default.Favorite, "favorites"),
     BottomNavItem("Search", Icons.Default.Search, "search"),
+    BottomNavItem("Downloads", Icons.Default.Download, "downloads"),
     BottomNavItem("Settings", Icons.Default.Settings, "settings")
 )
 
@@ -274,6 +276,10 @@ private fun HomeScreen(
                             navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
                         }
                     )
+                }
+
+                composable("downloads") {
+                    DownloadsScreen(downloadRepository = module.downloadRepository)
                 }
 
                 composable("settings") {

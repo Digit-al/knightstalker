@@ -31,7 +31,10 @@ class AppModule(private val context: Context) {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
-            .addInterceptor(MacCookieInterceptor { authManager.currentPortal?.macAddress ?: "" })
+            .addInterceptor(MacCookieInterceptor(
+                macProvider = { authManager.currentPortal?.macAddress ?: "" },
+                baseUrlProvider = { authManager.currentPortal?.url ?: "" }
+            ))
             .addInterceptor(StalkerAuthInterceptor { authManager.currentToken })
             .build()
     }

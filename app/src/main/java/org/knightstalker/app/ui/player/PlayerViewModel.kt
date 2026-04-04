@@ -174,13 +174,11 @@ class PlayerViewModel(
         val name = _state.value.channelName.ifEmpty { "download_${System.currentTimeMillis()}" }
         _state.update { it.copy(isDownloading = true, downloadError = null, downloadComplete = false) }
 
-        viewModelScope.launch {
-            downloadRepository.download(
-                id = "${name}_${System.currentTimeMillis()}",
-                name = name,
-                streamUrl = url
-            )
-        }
+        downloadRepository.startDownload(
+            id = "${name}_${System.currentTimeMillis()}",
+            name = name,
+            streamUrl = url
+        )
     }
 
     fun togglePlayPause() {

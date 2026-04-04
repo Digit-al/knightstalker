@@ -1,22 +1,55 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.ui.settings
 
+import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.ui.theme.*
+
+@Serializable
+private data class QrPortalData(
+    val n: String,
+    val u: String,
+    val m: String
+)
+
+private fun generateQrBitmap(content: String, size: Int = 512): Bitmap {
+    val writer = QRCodeWriter()
+    val matrix = writer.encode(content, BarcodeFormat.QR_CODE, size, size)
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
+    for (x in 0 until size) {
+        for (y in 0 until size) {
+            bitmap.setPixel(x, y, if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        }
+    }
+    return bitmap
+}
 
 @Composable
 fun SettingsScreen(
@@ -24,6 +57,107 @@ fun SettingsScreen(
     onPortals: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
+    var showQrDialog by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf<QrPortalData?>(null) }
+    var scanError by remember { mutableStateOf<String?>(null) }
+
+    val json = remember { Json { ignoreUnknownKeys = true } }
+
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents
+        if (contents != null) {
+            try {
+                val data = json.decodeFromString<QrPortalData>(contents)
+                if (data.u.isBlank()) {
+                    scanError = "Invalid QR: missing URL"
+                } else {
+                    showImportDialog = data
+                    scanError = null
+                }
+            } catch (_: Exception) {
+                scanError = "Invalid QR code format"
+            }
+        }
+    }
+
+    // QR Display Dialog
+    if (showQrDialog && state.connectedPortal != null) {
+        val portal = state.connectedPortal!!
+        val qrData = json.encodeToString(QrPortalData(
+            n = portal.name,
+            u = portal.url,
+            m = portal.macAddress
+        ))
+        val qrBitmap = remember(qrData) { generateQrBitmap(qrData) }
+
+        Dialog(onDismissRequest = { showQrDialog = false }) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = CardBackground)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Share Connection", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Scan this QR on another device",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "QR Code",
+                        modifier = Modifier
+                            .size(280.dp)
+                            .background(Color.White, RoundedCornerShape(8.dp))
+                            .padding(12.dp)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(portal.name, style = MaterialTheme.typography.bodyMedium)
+                    Text(portal.url, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    TextButton(onClick = { showQrDialog = false }) {
+                        Text("Close")
+                    }
+                }
+            }
+        }
+    }
+
+    // Import Confirmation Dialog
+    showImportDialog?.let { data ->
+        AlertDialog(
+            onDismissRequest = { showImportDialog = null },
+            title = { Text("Import Portal") },
+            text = {
+                Column {
+                    Text("Name: ${data.n}")
+                    Text("URL: ${data.u}", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Text("MAC: ${data.m}", color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.importPortal(data.n, data.u, data.m)
+                        showImportDialog = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                ) {
+                    Text("Import")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = null }) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = CardBackground
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -140,6 +274,53 @@ fun SettingsScreen(
             }
         }
 
+        // QR Code sharing
+        Card(colors = CardDefaults.cardColors(containerColor = CardBackground)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Share / Import", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { showQrDialog = true },
+                        enabled = state.connectedPortal != null,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.QrCode2, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Show QR")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            scanError = null
+                            val options = ScanOptions().apply {
+                                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                setPrompt("Scan a KnightStalker QR code")
+                                setBeepEnabled(false)
+                                setOrientationLocked(false)
+                            }
+                            scanLauncher.launch(options)
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scan QR")
+                    }
+                }
+                scanError?.let {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = Accent)
+                }
+                if (state.importSuccess) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Portal imported successfully!", style = MaterialTheme.typography.bodySmall, color = SuccessGreen)
+                }
+            }
+        }
+
         // Portal management
         Card(colors = CardDefaults.cardColors(containerColor = CardBackground)) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -177,12 +358,14 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text("Buffer Size: ${state.bufferSizeMs / 1000}s", style = MaterialTheme.typography.bodyLarge)
+                val bufferSec = state.bufferSizeMs / 1000
+                val bufferLabel = if (bufferSec >= 60) "${bufferSec / 60}min ${bufferSec % 60}s" else "${bufferSec}s"
+                Text("Buffer Size: $bufferLabel", style = MaterialTheme.typography.bodyLarge)
                 Slider(
                     value = state.bufferSizeMs.toFloat(),
                     onValueChange = { viewModel.setBufferSize(it.toInt()) },
-                    valueRange = 2000f..30000f,
-                    steps = 6,
+                    valueRange = 2000f..600000f,
+                    steps = 59,
                     colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent)
                 )
             }

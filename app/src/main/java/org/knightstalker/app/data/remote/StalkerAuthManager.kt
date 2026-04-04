@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.data.remote
 
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -62,7 +63,12 @@ class StalkerAuthManager(private val api: StalkerApi) {
             return false
         }
 
+        // Authenticate before making further API calls
+        val authResult = api.doAuth(portal.url)
+        Log.d("StalkerAuth", "do_auth result: ${authResult.isSuccess}")
+
         _connectionState.value = ConnectionState.CONNECTED
+        Log.d("StalkerAuth", "Connection state set to CONNECTED, portal=${portal.name}")
         startWatchdog(portal.url)
         return true
     }

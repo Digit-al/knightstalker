@@ -4,9 +4,11 @@ package org.knightstalker.app.ui.livetv
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import android.util.Log
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.knightstalker.app.data.local.prefs.UserPreferences
+import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.ChannelRepository
 import org.knightstalker.app.data.repository.EpgRepository
@@ -38,8 +40,16 @@ class LiveTvViewModel(
     val state: StateFlow<LiveTvState> = _state.asStateFlow()
 
     init {
-        loadCategories()
-        loadChannels()
+        viewModelScope.launch {
+            authManager.connectionState.collect { connState ->
+                Log.d("LiveTvVM", "connectionState=$connState, categories=${_state.value.categories.size}, portal=${authManager.currentPortal?.name}")
+                if (connState == ConnectionState.CONNECTED && _state.value.categories.isEmpty()) {
+                    Log.d("LiveTvVM", "Loading categories and channels")
+                    loadCategories()
+                    loadChannels()
+                }
+            }
+        }
         viewModelScope.launch {
             preferences.favoriteCategories.collect { favs ->
                 _state.update { it.copy(favoriteCategoryIds = favs) }

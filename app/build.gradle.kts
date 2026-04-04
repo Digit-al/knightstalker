@@ -91,6 +91,11 @@ dependencies {
     implementation(libs.coil.compose)
 
     implementation(libs.datastore.preferences)
+
+    implementation(libs.zxing.core)
+    implementation(libs.zxing.embedded) {
+        exclude(group = "com.google.android.gms")
+    }
 }
 
 tasks.whenTaskAdded {

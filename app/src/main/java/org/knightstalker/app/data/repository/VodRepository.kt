@@ -36,6 +36,21 @@ class VodRepository(
         }
     }
 
+    suspend fun getSeriesList(
+        baseUrl: String,
+        portalId: Long,
+        categoryId: String? = null,
+        page: Int = 1,
+        search: String? = null
+    ): Result<Pair<List<VodItem>, Int>> {
+        return api.getSeriesList(baseUrl, categoryId, page, search).map { response ->
+            val data = response.js ?: return@map emptyList<VodItem>() to 0
+            val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
+            val items = data.data.map { it.toDomain(favoriteIds) }
+            items to data.total_items
+        }
+    }
+
     suspend fun createLink(baseUrl: String, cmd: String): Result<String> {
         return api.createVodLink(baseUrl, cmd).map { response ->
             val link = response.js?.cmd ?: throw Exception("No stream URL returned")

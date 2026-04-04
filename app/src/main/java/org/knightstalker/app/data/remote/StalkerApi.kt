@@ -88,13 +88,23 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
     private suspend fun <T> get(url: String, deserializer: kotlinx.serialization.DeserializationStrategy<T>): Result<T> {
         return withContext(Dispatchers.IO) {
             try {
+                Log.d("StalkerApi", "URL: $url")
                 val request = Request.Builder().url(url).get().build()
-                val response = client.newCall(request).execute()
+                val actualRequest = client.newCall(request).execute()
+                val sentRequest = actualRequest.request
+                Log.d("StalkerApi", "REQUEST headers=${sentRequest.headers}")
+                val response = actualRequest
+                Log.d("StalkerApi", "RESPONSE ${response.code} headers=${response.headers}")
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
                 }
-                val body = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response"))
-                Log.d("StalkerApi", "URL: $url")
+                val rawBody = response.body?.string() ?: ""
+                Log.d("StalkerApi", "Body length=${rawBody.length} content=[${rawBody.take(200)}]")
+                val body = rawBody.takeIf { it.isNotBlank() }
+                if (body == null) {
+                    Log.w("StalkerApi", "Empty response for $url")
+                    return@withContext Result.failure(Exception("Empty response"))
+                }
                 Log.d("StalkerApi", "Response: ${body.take(500)}")
                 val parsed = json.decodeFromString(deserializer, body)
                 Result.success(parsed)
@@ -178,5 +188,21 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
 
     suspend fun createVodLink(baseUrl: String, cmd: String): Result<StalkerResponse<CreateLinkData>> {
         return createLink(baseUrl, cmd, "vod")
+    }
+
+    suspend fun getSeriesList(baseUrl: String, categoryId: String? = null, page: Int = 1, search: String? = null): Result<StalkerResponse<VodListData>> {
+        val params = mutableMapOf("p" to page.toString(), "sortby" to "added")
+        if (!categoryId.isNullOrEmpty() && categoryId != "*") {
+            params["category"] = categoryId
+        }
+        if (!search.isNullOrEmpty()) {
+            params["search"] = search
+        }
+        val url = buildUrl(baseUrl, "series", "get_ordered_list", params)
+        return get(url, StalkerResponse.serializer(VodListData.serializer()))
+    }
+
+    suspend fun createSeriesLink(baseUrl: String, cmd: String): Result<StalkerResponse<CreateLinkData>> {
+        return createLink(baseUrl, cmd, "series")
     }
 }

@@ -34,8 +34,8 @@ fun VodScreen(
         }
     }
 
-    LaunchedEffect(reachedEnd) {
-        if (reachedEnd && state.hasMore) {
+    LaunchedEffect(reachedEnd, state.hasMore, state.isLoading) {
+        if (reachedEnd && state.hasMore && !state.isLoading) {
             viewModel.loadMore()
         }
     }

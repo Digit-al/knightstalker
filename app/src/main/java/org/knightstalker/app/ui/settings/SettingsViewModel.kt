@@ -21,6 +21,7 @@ data class SettingsState(
     val portalName: String = "",
     val isSaving: Boolean = false,
     val saveSuccess: Boolean = false,
+    val importSuccess: Boolean = false,
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED
 )
 
@@ -100,6 +101,14 @@ class SettingsViewModel(
             authManager.disconnect()
             val success = authManager.connect(updated)
             _state.update { it.copy(isSaving = false, saveSuccess = success) }
+        }
+    }
+
+    fun importPortal(name: String, url: String, mac: String) {
+        viewModelScope.launch {
+            val portal = Portal(name = name, url = url, macAddress = mac)
+            portalRepository.save(portal)
+            _state.update { it.copy(importSuccess = true) }
         }
     }
 
