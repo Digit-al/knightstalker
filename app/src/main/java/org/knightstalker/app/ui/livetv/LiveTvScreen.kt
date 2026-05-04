@@ -46,7 +46,9 @@ fun LiveTvScreen(
                 selectedId = state.selectedCategory,
                 onSelect = { viewModel.selectCategory(it) },
                 favoriteIds = state.favoriteCategoryIds,
-                onToggleFavorite = { viewModel.toggleFavoriteCategory(it) }
+                onToggleFavorite = { viewModel.toggleFavoriteCategory(it) },
+                searchQuery = state.searchQuery,
+                onSearchChanged = { viewModel.setSearchQuery(it) }
             )
         }
 

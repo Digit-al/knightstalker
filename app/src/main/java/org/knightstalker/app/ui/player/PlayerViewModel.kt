@@ -128,6 +128,33 @@ class PlayerViewModel(
         }
     }
 
+    fun playSeries(cmd: String, name: String = "") {
+        val portal = authManager.currentPortal ?: return
+        currentItemId = cmd.hashCode().toString()
+        currentCmd = cmd
+        currentType = "series"
+        _state.update { it.copy(channelName = name, error = null, isBuffering = true) }
+
+        viewModelScope.launch {
+            vodRepository.createSeriesLink(portal.url, cmd)
+                .onSuccess { url ->
+                    _state.update { it.copy(currentStreamUrl = url) }
+                    val history = watchHistoryRepository.getEntry(currentItemId, portal.id)
+                    if (history != null && !history.isFinished && history.positionMs > 5000) {
+                        _state.update {
+                            it.copy(resumePositionMs = history.positionMs, showResumePrompt = true)
+                        }
+                    }
+                    player.setMediaItem(MediaItem.fromUri(url))
+                    player.prepare()
+                    player.play()
+                }
+                .onFailure { e ->
+                    _state.update { it.copy(error = e.message, isBuffering = false) }
+                }
+        }
+    }
+
     fun playVod(cmd: String, name: String = "") {
         val portal = authManager.currentPortal ?: return
         currentItemId = cmd.hashCode().toString()

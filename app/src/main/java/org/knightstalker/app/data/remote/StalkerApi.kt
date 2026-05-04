@@ -174,6 +174,11 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
         return get(url, StalkerResponse.serializer(kotlinx.serialization.builtins.ListSerializer(VodCategoryData.serializer())))
     }
 
+    suspend fun getSeriesCategories(baseUrl: String): Result<StalkerResponse<List<VodCategoryData>>> {
+        val url = buildUrl(baseUrl, "series", "get_categories")
+        return get(url, StalkerResponse.serializer(kotlinx.serialization.builtins.ListSerializer(VodCategoryData.serializer())))
+    }
+
     suspend fun getVodList(baseUrl: String, categoryId: String? = null, page: Int = 1, search: String? = null): Result<StalkerResponse<VodListData>> {
         val params = mutableMapOf("p" to page.toString(), "sortby" to "added")
         if (!categoryId.isNullOrEmpty() && categoryId != "*") {

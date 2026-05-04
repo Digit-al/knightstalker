@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.ui.navigation
 
+import android.view.KeyEvent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -32,14 +33,13 @@ import org.knightstalker.app.ui.portal.PortalEditScreen
 import org.knightstalker.app.ui.portal.PortalListScreen
 import org.knightstalker.app.ui.portal.PortalViewModel
 import org.knightstalker.app.ui.downloads.DownloadsScreen
-import org.knightstalker.app.ui.search.SearchScreen
-import org.knightstalker.app.ui.search.SearchViewModel
 import org.knightstalker.app.ui.settings.SettingsScreen
 import org.knightstalker.app.ui.settings.SettingsViewModel
 import org.knightstalker.app.ui.theme.DarkBackground
 import org.knightstalker.app.ui.theme.DarkSurface
 import org.knightstalker.app.ui.theme.Accent
 import org.knightstalker.app.ui.theme.TextSecondary
+import org.knightstalker.app.ui.vod.ContentMode
 import org.knightstalker.app.ui.vod.VodScreen
 import org.knightstalker.app.ui.vod.VodViewModel
 import java.net.URLDecoder
@@ -64,11 +64,11 @@ data class BottomNavItem(val label: String, val icon: ImageVector, val route: St
 
 private val bottomNavItems = listOf(
     BottomNavItem("Movies", Icons.Default.Movie, "vod"),
+    BottomNavItem("Series", Icons.Default.Tv, "series"),
     BottomNavItem("Live TV", Icons.Default.LiveTv, "livetv"),
     BottomNavItem("History", Icons.Default.History, "history"),
     BottomNavItem("Guide", Icons.Default.CalendarMonth, "epg"),
     BottomNavItem("Favorites", Icons.Default.Favorite, "favorites"),
-    BottomNavItem("Search", Icons.Default.Search, "search"),
     BottomNavItem("Downloads", Icons.Default.Download, "downloads"),
     BottomNavItem("Settings", Icons.Default.Settings, "settings")
 )
@@ -151,6 +151,12 @@ fun KnightNavGraph() {
     }
 }
 
+// Routes cycled by Channel +/- and the LIST/TV buttons on a TV remote
+private val cycleRoutes = listOf("vod", "series", "livetv")
+
+// Set by HomeScreen so MainActivity.onKeyDown can forward TV remote keys.
+internal var remoteKeyHandler: ((Int) -> Boolean)? = null
+
 @Composable
 private fun HomeScreen(
     module: org.knightstalker.app.di.AppModule,
@@ -163,6 +169,68 @@ private fun HomeScreen(
     // Hide bottom bar when not on a main tab
     val showBottomBar = currentRoute in bottomNavItems.map { it.route }
 
+    fun goToTab(route: String) {
+        homeNavController.navigate(route) {
+            popUpTo(homeNavController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    fun cycleTab(direction: Int) {
+        val current = currentRoute ?: cycleRoutes[0]
+        val idx = cycleRoutes.indexOf(current).takeIf { it >= 0 } ?: 0
+        val next = cycleRoutes[((idx + direction) % cycleRoutes.size + cycleRoutes.size) % cycleRoutes.size]
+        goToTab(next)
+    }
+
+    val routeState = rememberUpdatedState(currentRoute)
+    DisposableEffect(homeNavController) {
+        val routes = bottomNavItems.map { it.route }
+        fun cycle(direction: Int) {
+            val cur = routeState.value ?: cycleRoutes[0]
+            val idx = cycleRoutes.indexOf(cur).takeIf { it >= 0 } ?: 0
+            val next = cycleRoutes[((idx + direction) % cycleRoutes.size + cycleRoutes.size) % cycleRoutes.size]
+            homeNavController.navigate(next) {
+                popUpTo(homeNavController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+        fun jump(route: String) {
+            homeNavController.navigate(route) {
+                popUpTo(homeNavController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+        remoteKeyHandler = handler@{ keyCode ->
+            // Only handle when on a home tab (don't hijack keys in player/portal screens)
+            if (routeState.value !in routes) return@handler false
+            when (keyCode) {
+                // Cycle forward (next tab in Movies → Series → Live TV)
+                KeyEvent.KEYCODE_CHANNEL_UP,
+                KeyEvent.KEYCODE_BOOKMARK,
+                KeyEvent.KEYCODE_TV,
+                KeyEvent.KEYCODE_TV_INPUT,
+                KeyEvent.KEYCODE_TV_TIMER_PROGRAMMING,
+                KeyEvent.KEYCODE_PAGE_DOWN,
+                KeyEvent.KEYCODE_MEDIA_NEXT,
+                KeyEvent.KEYCODE_PROG_YELLOW -> { cycle(+1); true }
+                // Cycle backward
+                KeyEvent.KEYCODE_CHANNEL_DOWN,
+                KeyEvent.KEYCODE_PAGE_UP,
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+                KeyEvent.KEYCODE_PROG_GREEN -> { cycle(-1); true }
+                // Direct jumps via colored buttons
+                KeyEvent.KEYCODE_PROG_RED -> { jump("vod"); true }
+                KeyEvent.KEYCODE_PROG_BLUE -> { jump("livetv"); true }
+                else -> false
+            }
+        }
+        onDispose { remoteKeyHandler = null }
+    }
+
     Scaffold(
         containerColor = DarkBackground,
         bottomBar = {
@@ -171,22 +239,11 @@ private fun HomeScreen(
                     bottomNavItems.forEach { item ->
                         NavigationBarItem(
                             selected = currentRoute == item.route,
-                            onClick = {
-                                homeNavController.navigate(item.route) {
-                                    popUpTo(homeNavController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
+                            onClick = { goToTab(item.route) },
                             icon = { Icon(item.icon, contentDescription = item.label) },
-                            label = { Text(item.label) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = Accent,
-                                selectedTextColor = Accent,
                                 unselectedIconColor = TextSecondary,
-                                unselectedTextColor = TextSecondary,
                                 indicatorColor = Accent.copy(alpha = 0.15f)
                             )
                         )
@@ -223,7 +280,7 @@ private fun HomeScreen(
 
                 composable("vod") {
                     val vm: VodViewModel = viewModel(
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, ContentMode.Vod)
                     )
                     VodScreen(
                         viewModel = vm,
@@ -232,6 +289,22 @@ private fun HomeScreen(
                         },
                         onPlayVod = { cmd ->
                             navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
+                        }
+                    )
+                }
+
+                composable("series") {
+                    val vm: VodViewModel = viewModel(
+                        key = "series",
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, ContentMode.Series)
+                    )
+                    VodScreen(
+                        viewModel = vm,
+                        onVodClick = { id, cmd ->
+                            navController.navigate(NavRoute.Player.createRoute("series", cmd, ""))
+                        },
+                        onPlayVod = { cmd ->
+                            navController.navigate(NavRoute.Player.createRoute("series", cmd, ""))
                         }
                     )
                 }
@@ -253,21 +326,6 @@ private fun HomeScreen(
                         factory = FavoritesViewModel.Factory(module.favoriteRepository, module.authManager)
                     )
                     FavoritesScreen(
-                        viewModel = vm,
-                        onChannelClick = { id, cmd ->
-                            navController.navigate(NavRoute.Player.createRoute("itv", cmd, ""))
-                        },
-                        onVodClick = { id, cmd ->
-                            navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
-                        }
-                    )
-                }
-
-                composable("search") {
-                    val vm: SearchViewModel = viewModel(
-                        factory = SearchViewModel.Factory(module.channelRepository, module.vodRepository, module.authManager)
-                    )
-                    SearchScreen(
                         viewModel = vm,
                         onChannelClick = { id, cmd ->
                             navController.navigate(NavRoute.Player.createRoute("itv", cmd, ""))

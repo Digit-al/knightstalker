@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import android.util.Log
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.knightstalker.app.data.local.prefs.UserPreferences
@@ -25,7 +27,8 @@ data class LiveTvState(
     val currentPage: Int = 1,
     val totalItems: Int = 0,
     val hasMore: Boolean = false,
-    val favoriteCategoryIds: Set<String> = emptySet()
+    val favoriteCategoryIds: Set<String> = emptySet(),
+    val searchQuery: String = ""
 )
 
 class LiveTvViewModel(
@@ -78,8 +81,13 @@ class LiveTvViewModel(
 
         viewModelScope.launch {
             val categoryId = genreId ?: _state.value.selectedCategory
-            channelRepository.getChannels(portal.url, portal.id, categoryId, page)
-                .onSuccess { (channels, total) ->
+            val search = _state.value.searchQuery.takeIf { it.isNotBlank() }
+            channelRepository.getChannels(portal.url, portal.id, categoryId, page, search)
+                .onSuccess { (rawChannels, total) ->
+                    // Some portals ignore the search param for itv — filter client-side as a safety net
+                    val channels = if (search != null) {
+                        rawChannels.filter { it.name.contains(search, ignoreCase = true) }
+                    } else rawChannels
                     val enriched = channels.map { channel ->
                         // Load short EPG for each channel
                         val epgResult = epgRepository.getShortEpg(portal.url, channel.id)
@@ -113,6 +121,17 @@ class LiveTvViewModel(
             loadFavoriteChannels()
         } else {
             loadChannels(categoryId, 1)
+        }
+    }
+
+    private var searchJob: Job? = null
+    fun setSearchQuery(query: String) {
+        _state.update { it.copy(searchQuery = query) }
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            delay(400)
+            _state.update { it.copy(channels = emptyList()) }
+            loadChannels(page = 1)
         }
     }
 

@@ -21,6 +21,15 @@ class VodRepository(
         }
     }
 
+    suspend fun getSeriesCategories(baseUrl: String): Result<List<VodCategory>> {
+        return api.getSeriesCategories(baseUrl).map { response ->
+            val categories = response.js ?: emptyList()
+            val mapped = categories.map { it.toDomain() }
+            val all = VodCategory(id = "*", title = "All", alias = "all")
+            listOf(all) + mapped.filter { it.title.lowercase() != "all" }
+        }
+    }
+
     suspend fun getVodList(
         baseUrl: String,
         portalId: Long,
@@ -53,6 +62,14 @@ class VodRepository(
 
     suspend fun createLink(baseUrl: String, cmd: String): Result<String> {
         return api.createVodLink(baseUrl, cmd).map { response ->
+            val link = response.js?.cmd ?: throw Exception("No stream URL returned")
+            if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
+            else link.trim()
+        }
+    }
+
+    suspend fun createSeriesLink(baseUrl: String, cmd: String): Result<String> {
+        return api.createSeriesLink(baseUrl, cmd).map { response ->
             val link = response.js?.cmd ?: throw Exception("No stream URL returned")
             if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
             else link.trim()

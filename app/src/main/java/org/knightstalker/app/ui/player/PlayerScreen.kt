@@ -37,10 +37,10 @@ fun PlayerScreen(
     val state by viewModel.state.collectAsState()
 
     LaunchedEffect(cmd) {
-        if (type == "vod") {
-            viewModel.playVod(cmd, name)
-        } else {
-            viewModel.playChannel(cmd, name)
+        when (type) {
+            "vod" -> viewModel.playVod(cmd, name)
+            "series" -> viewModel.playSeries(cmd, name)
+            else -> viewModel.playChannel(cmd, name)
         }
     }
 
