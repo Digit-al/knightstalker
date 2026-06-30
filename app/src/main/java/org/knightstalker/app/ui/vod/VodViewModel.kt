@@ -39,7 +39,7 @@ data class VodState(
     val selectedVod: VodItem? = null,
     val favoriteCategoryIds: Set<String> = emptySet(),
     val searchQuery: String = "",
-    val sortBy: VodSort = VodSort.Added,
+    val sortBy: VodSort = VodSort.Rating,
     // Raw number of items fetched from the server so far (before any client-side
     // filtering), used to drive pagination independently of the visible count.
     val rawLoaded: Int = 0
