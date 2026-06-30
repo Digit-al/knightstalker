@@ -179,8 +179,8 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
         return get(url, StalkerResponse.serializer(kotlinx.serialization.builtins.ListSerializer(VodCategoryData.serializer())))
     }
 
-    suspend fun getVodList(baseUrl: String, categoryId: String? = null, page: Int = 1, search: String? = null): Result<StalkerResponse<VodListData>> {
-        val params = mutableMapOf("p" to page.toString(), "sortby" to "added")
+    suspend fun getVodList(baseUrl: String, categoryId: String? = null, page: Int = 1, search: String? = null, sortBy: String = "added"): Result<StalkerResponse<VodListData>> {
+        val params = mutableMapOf("p" to page.toString(), "sortby" to sortBy)
         if (!categoryId.isNullOrEmpty() && categoryId != "*") {
             params["category"] = categoryId
         }
@@ -195,8 +195,8 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
         return createLink(baseUrl, cmd, "vod")
     }
 
-    suspend fun getSeriesList(baseUrl: String, categoryId: String? = null, page: Int = 1, search: String? = null): Result<StalkerResponse<VodListData>> {
-        val params = mutableMapOf("p" to page.toString(), "sortby" to "added")
+    suspend fun getSeriesList(baseUrl: String, categoryId: String? = null, page: Int = 1, search: String? = null, sortBy: String = "added"): Result<StalkerResponse<VodListData>> {
+        val params = mutableMapOf("p" to page.toString(), "sortby" to sortBy)
         if (!categoryId.isNullOrEmpty() && categoryId != "*") {
             params["category"] = categoryId
         }

@@ -76,6 +76,10 @@ class AppModule(private val context: Context) {
     }
 
     val downloadRepository: DownloadRepository by lazy {
-        DownloadRepository(context)
+        DownloadRepository(context).apply {
+            // Re-mint a fresh play link before each download attempt so resume /
+            // retry survives the portal's expiring single-use play tokens.
+            linkResolver = { portalUrl, cmd -> vodRepository.createLink(portalUrl, cmd) }
+        }
     }
 }

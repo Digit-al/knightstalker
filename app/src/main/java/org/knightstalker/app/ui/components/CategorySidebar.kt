@@ -2,6 +2,7 @@
 package org.knightstalker.app.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -10,10 +11,15 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -22,12 +28,16 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -47,6 +57,10 @@ fun CategorySidebar(
     onToggleFavorite: ((String) -> Unit)? = null,
     searchQuery: String? = null,
     onSearchChanged: ((String) -> Unit)? = null,
+    // Optional sort selector rendered at the top-left. Each option is (id, label).
+    sortOptions: List<Pair<String, String>> = emptyList(),
+    selectedSortId: String? = null,
+    onSortSelected: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val sorted = if (favoriteIds.isNotEmpty()) {
@@ -72,6 +86,66 @@ fun CategorySidebar(
             .background(DarkSurfaceVariant)
             .padding(8.dp)
     ) {
+        if (sortOptions.isNotEmpty() && onSortSelected != null) {
+            var sortExpanded by remember { mutableStateOf(false) }
+            val currentLabel = sortOptions.firstOrNull { it.first == selectedSortId }?.second
+                ?: sortOptions.first().second
+            Box(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Accent.copy(alpha = 0.15f))
+                        .clickable { sortExpanded = true }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Sort,
+                        contentDescription = "Sort",
+                        modifier = Modifier.size(18.dp),
+                        tint = Accent
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = currentLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        Icons.Default.ArrowDropDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = TextSecondary
+                    )
+                }
+                DropdownMenu(
+                    expanded = sortExpanded,
+                    onDismissRequest = { sortExpanded = false }
+                ) {
+                    sortOptions.forEach { (id, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                sortExpanded = false
+                                onSortSelected(id)
+                            },
+                            leadingIcon = {
+                                if (id == selectedSortId) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = Accent)
+                                } else {
+                                    Spacer(Modifier.size(24.dp))
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
         val searchHandler = onSearchChanged
         if (searchHandler != null) {
             OutlinedTextField(
@@ -114,12 +188,26 @@ fun CategorySidebar(
             val isFavorite = id in favoriteIds
             val isSpecial = id == "*" || id == "favs"
             val rowFocusModifier = if (index == 0) Modifier.focusRequester(firstItemFocus) else Modifier
+            // Track D-pad/remote focus so the pointed-at row is visibly highlighted.
+            var isFocused by remember { mutableStateOf(false) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSelected) Accent.copy(alpha = 0.2f) else Color.Transparent)
+                    .background(
+                        when {
+                            isFocused -> Accent.copy(alpha = 0.45f)
+                            isSelected -> Accent.copy(alpha = 0.2f)
+                            else -> Color.Transparent
+                        }
+                    )
+                    .border(
+                        width = if (isFocused) 2.dp else 0.dp,
+                        color = if (isFocused) Accent else Color.Transparent,
+                        shape = RoundedCornerShape(8.dp)
+                    )
                     .then(rowFocusModifier)
+                    .onFocusChanged { isFocused = it.isFocused }
                     .focusable()
                     .clickable { onSelect(id) }
                     .padding(start = 10.dp, end = 2.dp, top = 2.dp, bottom = 2.dp),
@@ -128,7 +216,7 @@ fun CategorySidebar(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (isSelected) Accent else MaterialTheme.colorScheme.onSurface,
+                    color = if (isSelected || isFocused) Accent else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)

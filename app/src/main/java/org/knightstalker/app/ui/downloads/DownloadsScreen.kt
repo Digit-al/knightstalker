@@ -21,7 +21,10 @@ import org.knightstalker.app.data.repository.DownloadTask
 import org.knightstalker.app.ui.theme.*
 
 @Composable
-fun DownloadsScreen(downloadRepository: DownloadRepository) {
+fun DownloadsScreen(
+    downloadRepository: DownloadRepository,
+    onPlay: (DownloadTask) -> Unit = {}
+) {
     val downloads by downloadRepository.downloads.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -44,11 +47,11 @@ fun DownloadsScreen(downloadRepository: DownloadRepository) {
                 items(downloads, key = { it.id }) { task ->
                     DownloadItem(
                         task = task,
+                        onPlay = { onPlay(task) },
                         onPause = { downloadRepository.pauseDownload(task.id) },
                         onResume = { downloadRepository.resumeDownload(task.id) },
-                        onCancel = { downloadRepository.cancelDownload(task.id) },
-                        onRetry = { downloadRepository.retryDownload(task.id) },
-                        onRemove = { downloadRepository.removeDownload(task.id) }
+                        onRestart = { downloadRepository.retryDownload(task.id) },
+                        onDelete = { downloadRepository.removeDownload(task.id) }
                     )
                 }
             }
@@ -59,11 +62,11 @@ fun DownloadsScreen(downloadRepository: DownloadRepository) {
 @Composable
 private fun DownloadItem(
     task: DownloadTask,
+    onPlay: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
-    onCancel: () -> Unit,
-    onRetry: () -> Unit,
-    onRemove: () -> Unit
+    onRestart: () -> Unit,
+    onDelete: () -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = CardBackground),
@@ -108,7 +111,7 @@ private fun DownloadItem(
                         buildString {
                             append(task.status.name.lowercase().replaceFirstChar { it.uppercase() })
                             if (task.totalBytes > 0) {
-                                append(" \u2022 ${formatBytes(task.bytesDownloaded)}/${formatBytes(task.totalBytes)}")
+                                append(" • ${formatBytes(task.bytesDownloaded)}/${formatBytes(task.totalBytes)}")
                             }
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -116,46 +119,35 @@ private fun DownloadItem(
                     )
                 }
 
-                // Action buttons
+                // Action buttons per state. Commands: play, resume, pause,
+                // restart, delete — each with its own icon.
                 when (task.status) {
                     DownloadStatus.DOWNLOADING -> {
-                        IconButton(onClick = onPause) {
-                            Icon(Icons.Default.Pause, contentDescription = "Pause", tint = TextPrimary)
-                        }
-                        IconButton(onClick = onCancel) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Accent)
-                        }
+                        ActionIcon(Icons.Default.Pause, "Pause", TextPrimary, onPause)
+                        ActionIcon(Icons.Default.Refresh, "Restart", WarningOrange, onRestart)
+                        ActionIcon(Icons.Default.Delete, "Delete", Accent, onDelete)
                     }
-                    DownloadStatus.PAUSED -> {
-                        IconButton(onClick = onResume) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = "Resume", tint = SuccessGreen)
-                        }
-                        IconButton(onClick = onCancel) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Accent)
-                        }
-                    }
-                    DownloadStatus.FAILED -> {
-                        IconButton(onClick = onRetry) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Retry", tint = WarningOrange)
-                        }
-                        IconButton(onClick = onRemove) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove", tint = Accent)
-                        }
+                    DownloadStatus.PAUSED, DownloadStatus.FAILED -> {
+                        ActionIcon(Icons.Default.PlayArrow, "Resume", SuccessGreen, onResume)
+                        ActionIcon(Icons.Default.Refresh, "Restart", WarningOrange, onRestart)
+                        ActionIcon(Icons.Default.Delete, "Delete", Accent, onDelete)
                     }
                     DownloadStatus.COMPLETED -> {
-                        IconButton(onClick = onRemove) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove", tint = TextSecondary)
-                        }
+                        ActionIcon(Icons.Default.PlayCircle, "Play", SuccessGreen, onPlay)
+                        ActionIcon(Icons.Default.Delete, "Delete", TextSecondary, onDelete)
                     }
-                    DownloadStatus.CANCELLED, DownloadStatus.PENDING -> {
-                        IconButton(onClick = onRemove) {
-                            Icon(Icons.Default.Delete, contentDescription = "Remove", tint = TextSecondary)
-                        }
+                    DownloadStatus.PENDING -> {
+                        ActionIcon(Icons.Default.Pause, "Pause", TextPrimary, onPause)
+                        ActionIcon(Icons.Default.Delete, "Delete", Accent, onDelete)
+                    }
+                    DownloadStatus.CANCELLED -> {
+                        ActionIcon(Icons.Default.Refresh, "Restart", WarningOrange, onRestart)
+                        ActionIcon(Icons.Default.Delete, "Delete", TextSecondary, onDelete)
                     }
                 }
             }
 
-            // Progress bar
+            // Progress bar + live speed / ETA
             if (task.status == DownloadStatus.DOWNLOADING || task.status == DownloadStatus.PAUSED) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LinearProgressIndicator(
@@ -166,12 +158,25 @@ private fun DownloadItem(
                     color = if (task.status == DownloadStatus.DOWNLOADING) Accent else WarningOrange,
                     trackColor = DividerColor
                 )
-                Text(
-                    "${(task.progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "${(task.progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary
+                    )
+                    if (task.status == DownloadStatus.DOWNLOADING && task.speedBytesPerSec > 0) {
+                        Text(
+                            "${formatSpeed(task.speedBytesPerSec)} • ${formatEta(task)} left",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary
+                        )
+                    }
+                }
             }
 
             // Error message
@@ -183,11 +188,39 @@ private fun DownloadItem(
     }
 }
 
+@Composable
+private fun ActionIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    tint: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
+    IconButton(onClick = onClick) {
+        Icon(icon, contentDescription = description, tint = tint)
+    }
+}
+
 private fun formatBytes(bytes: Long): String {
     return when {
         bytes < 1024 -> "$bytes B"
         bytes < 1024 * 1024 -> "${bytes / 1024} KB"
         bytes < 1024 * 1024 * 1024 -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
         else -> "${"%.2f".format(bytes / (1024.0 * 1024.0 * 1024.0))} GB"
+    }
+}
+
+private fun formatSpeed(bytesPerSec: Long): String = "${formatBytes(bytesPerSec)}/s"
+
+private fun formatEta(task: DownloadTask): String {
+    val remaining = task.totalBytes - task.bytesDownloaded
+    if (remaining <= 0 || task.speedBytesPerSec <= 0) return "--"
+    val seconds = remaining / task.speedBytesPerSec
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return when {
+        h > 0 -> "%d:%02d:%02d".format(h, m, s)
+        m > 0 -> "%d:%02d".format(m, s)
+        else -> "${s}s"
     }
 }

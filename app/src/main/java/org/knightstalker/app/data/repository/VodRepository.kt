@@ -35,9 +35,10 @@ class VodRepository(
         portalId: Long,
         categoryId: String? = null,
         page: Int = 1,
-        search: String? = null
+        search: String? = null,
+        sortBy: String = "added"
     ): Result<Pair<List<VodItem>, Int>> {
-        return api.getVodList(baseUrl, categoryId, page, search).map { response ->
+        return api.getVodList(baseUrl, categoryId, page, search, sortBy).map { response ->
             val data = response.js ?: return@map emptyList<VodItem>() to 0
             val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
             val items = data.data.map { it.toDomain(favoriteIds) }
@@ -50,9 +51,10 @@ class VodRepository(
         portalId: Long,
         categoryId: String? = null,
         page: Int = 1,
-        search: String? = null
+        search: String? = null,
+        sortBy: String = "added"
     ): Result<Pair<List<VodItem>, Int>> {
-        return api.getSeriesList(baseUrl, categoryId, page, search).map { response ->
+        return api.getSeriesList(baseUrl, categoryId, page, search, sortBy).map { response ->
             val data = response.js ?: return@map emptyList<VodItem>() to 0
             val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
             val items = data.data.map { it.toDomain(favoriteIds) }

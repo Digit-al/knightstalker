@@ -22,7 +22,8 @@ import org.knightstalker.app.ui.theme.TextSecondary
 fun VodScreen(
     viewModel: VodViewModel,
     onVodClick: (String, String) -> Unit,
-    onPlayVod: (String) -> Unit
+    onPlayVod: (String) -> Unit,
+    onOpenDownloads: () -> Unit = {}
 ) {
     val state by viewModel.state.collectAsState()
     val gridState = rememberLazyGridState()
@@ -46,7 +47,11 @@ fun VodScreen(
         VodDetailScreen(
             vod = vod,
             onPlay = { onPlayVod(vod.cmd) },
-            onDownload = { viewModel.downloadVod(vod) },
+            onDownload = {
+                viewModel.downloadVod(vod)
+                viewModel.selectVod(null)
+                onOpenDownloads()
+            },
             onToggleFavorite = { viewModel.toggleFavorite(vod) },
             onDismiss = { viewModel.selectVod(null) }
         )
@@ -62,7 +67,12 @@ fun VodScreen(
                 favoriteIds = state.favoriteCategoryIds,
                 onToggleFavorite = { viewModel.toggleFavoriteCategory(it) },
                 searchQuery = state.searchQuery,
-                onSearchChanged = { viewModel.setSearchQuery(it) }
+                onSearchChanged = { viewModel.setSearchQuery(it) },
+                sortOptions = VodSort.values().map { it.api to it.label },
+                selectedSortId = state.sortBy.api,
+                onSortSelected = { api ->
+                    VodSort.values().firstOrNull { it.api == api }?.let { viewModel.setSortBy(it) }
+                }
             )
         }
 

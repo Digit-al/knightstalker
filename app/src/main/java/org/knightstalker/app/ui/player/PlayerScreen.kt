@@ -38,6 +38,7 @@ fun PlayerScreen(
 
     LaunchedEffect(cmd) {
         when (type) {
+            "local" -> viewModel.playLocal(cmd, name)
             "vod" -> viewModel.playVod(cmd, name)
             "series" -> viewModel.playSeries(cmd, name)
             else -> viewModel.playChannel(cmd, name)

@@ -29,7 +29,14 @@ data class DownloadTask(
     val totalBytes: Long = 0L,
     val status: DownloadStatus = DownloadStatus.PENDING,
     val filePath: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    // Live transfer rate while DOWNLOADING (bytes/sec); not persisted.
+    val speedBytesPerSec: Long = 0L,
+    // Stalker portal cmd + portal base URL. Kept so a fresh play link can be
+    // re-minted on resume/retry — portal play tokens are single-use and expire,
+    // so the original `url` is dead by the time a download is resumed.
+    val cmd: String? = null,
+    val portalUrl: String? = null
 )
 
 enum class DownloadStatus {
@@ -45,7 +52,9 @@ private data class PersistedDownload(
     val totalBytes: Long = 0L,
     val status: String = "PENDING",
     val filePath: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    val cmd: String? = null,
+    val portalUrl: String? = null
 )
 
 class DownloadRepository(private val context: Context) {
@@ -56,6 +65,13 @@ class DownloadRepository(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = mutableMapOf<String, Job>()
     private val json = Json { ignoreUnknownKeys = true }
+
+    /**
+     * Re-resolves a fresh, playable stream URL from (portalUrl, cmd). Wired up in
+     * the DI module to the Stalker create_link call. Used to refresh the expiring
+     * play token before every download attempt so resume/retry actually work.
+     */
+    var linkResolver: (suspend (portalUrl: String, cmd: String) -> Result<String>)? = null
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -80,13 +96,20 @@ class DownloadRepository(private val context: Context) {
         loadPersistedDownloads()
     }
 
-    fun startDownload(id: String, name: String, streamUrl: String) {
+    fun startDownload(
+        id: String,
+        name: String,
+        streamUrl: String,
+        cmd: String? = null,
+        portalUrl: String? = null
+    ) {
         // Avoid duplicate
         if (_downloads.value.any { it.id == id && it.status == DownloadStatus.DOWNLOADING }) return
 
         val task = DownloadTask(
             id = id, name = name, url = streamUrl,
-            status = DownloadStatus.DOWNLOADING
+            status = DownloadStatus.DOWNLOADING,
+            cmd = cmd, portalUrl = portalUrl
         )
         _downloads.update { list ->
             list.filter { it.id != id } + task
@@ -106,7 +129,7 @@ class DownloadRepository(private val context: Context) {
     fun pauseDownload(id: String) {
         jobs[id]?.cancel()
         jobs.remove(id)
-        updateTask(id) { it.copy(status = DownloadStatus.PAUSED) }
+        updateTask(id) { it.copy(status = DownloadStatus.PAUSED, speedBytesPerSec = 0L) }
         persist()
     }
 
@@ -141,14 +164,41 @@ class DownloadRepository(private val context: Context) {
 
     private fun launchDownload(task: DownloadTask) {
         val job = scope.launch {
-            try {
-                doDownload(task)
-            } catch (e: CancellationException) {
-                // Paused or cancelled — don't mark as failed
-            } catch (e: Exception) {
-                Log.e("Download", "Download failed: ${task.name}", e)
-                updateTask(task.id) { it.copy(status = DownloadStatus.FAILED, error = e.message) }
-                persist()
+            // IPTV CDNs routinely drop long transfers mid-stream ("unexpected end
+            // of stream", socket timeouts). Auto-retry such transient failures,
+            // resuming from the partial file each time (with a fresh play link
+            // when a resolver is available), so large downloads complete
+            // unattended instead of stopping at the first hiccup.
+            val maxAttempts = 8
+            var attempt = 0
+            while (true) {
+                try {
+                    doDownload(task)
+                    return@launch
+                } catch (e: CancellationException) {
+                    // Paused or cancelled — don't mark as failed
+                    return@launch
+                } catch (e: Exception) {
+                    attempt++
+                    Log.e("Download", "Download error (attempt $attempt): ${task.name}", e)
+                    if (attempt >= maxAttempts) {
+                        updateTask(task.id) {
+                            it.copy(status = DownloadStatus.FAILED, error = e.message, speedBytesPerSec = 0L)
+                        }
+                        persist()
+                        return@launch
+                    }
+                    // Surface the retry in the UI, back off, then resume.
+                    updateTask(task.id) {
+                        it.copy(
+                            status = DownloadStatus.DOWNLOADING,
+                            error = "Connection dropped — retrying ($attempt/$maxAttempts)…",
+                            speedBytesPerSec = 0L
+                        )
+                    }
+                    persist()
+                    delay(3000L * attempt)
+                }
             }
         }
         jobs[task.id] = job
@@ -169,7 +219,27 @@ class DownloadRepository(private val context: Context) {
         // Check for existing partial file to resume
         val existingBytes = if (file.exists()) file.length() else 0L
 
-        val requestBuilder = Request.Builder().url(task.url)
+        // Re-mint a fresh stream URL. Stalker play tokens are single-use and
+        // expire, so the stored url is typically dead on resume/retry (the
+        // original HTTP 401 failures). Falls back to the stored url when no
+        // cmd/portal is available (e.g. legacy tasks).
+        val resolver = linkResolver
+        val cmd = task.cmd
+        val portalUrl = task.portalUrl
+        val effectiveUrl = if (resolver != null && cmd != null && portalUrl != null) {
+            resolver(portalUrl, cmd).getOrElse { e ->
+                updateTask(task.id) {
+                    it.copy(status = DownloadStatus.FAILED, error = "Could not refresh link: ${e.message}")
+                }
+                persist()
+                return
+            }
+        } else {
+            task.url
+        }
+        updateTask(task.id) { it.copy(url = effectiveUrl) }
+
+        val requestBuilder = Request.Builder().url(effectiveUrl)
         if (existingBytes > 0) {
             requestBuilder.header("Range", "bytes=$existingBytes-")
         }
@@ -197,24 +267,42 @@ class DownloadRepository(private val context: Context) {
         val totalBytes = if (isResume) existingBytes + contentLength else contentLength
         var bytesRead = if (isResume) existingBytes else 0L
 
-        updateTask(task.id) { it.copy(totalBytes = totalBytes, bytesDownloaded = bytesRead) }
+        // Successful (re)connect — clear any prior retry/error message.
+        updateTask(task.id) {
+            it.copy(
+                status = DownloadStatus.DOWNLOADING,
+                totalBytes = totalBytes,
+                bytesDownloaded = bytesRead,
+                error = null
+            )
+        }
 
         FileOutputStream(file, isResume).use { output ->
             body.byteStream().use { input ->
-                val buffer = ByteArray(8192)
+                val buffer = ByteArray(64 * 1024)
                 var read: Int
+                var lastTickMs = System.currentTimeMillis()
+                var lastTickBytes = bytesRead
                 while (input.read(buffer).also { read = it } != -1) {
                     coroutineContext.ensureActive()
 
                     output.write(buffer, 0, read)
                     bytesRead += read
 
-                    val progress = if (totalBytes > 0) {
-                        bytesRead.toFloat() / totalBytes.toFloat()
-                    } else 0f
-
-                    updateTask(task.id) {
-                        it.copy(progress = progress, bytesDownloaded = bytesRead)
+                    // Throttle UI emissions to a few per second and derive the
+                    // instantaneous speed from bytes transferred since last tick.
+                    val now = System.currentTimeMillis()
+                    val elapsed = now - lastTickMs
+                    if (elapsed >= 350) {
+                        val speed = (bytesRead - lastTickBytes) * 1000 / elapsed
+                        val progress = if (totalBytes > 0) {
+                            bytesRead.toFloat() / totalBytes.toFloat()
+                        } else 0f
+                        updateTask(task.id) {
+                            it.copy(progress = progress, bytesDownloaded = bytesRead, speedBytesPerSec = speed)
+                        }
+                        lastTickMs = now
+                        lastTickBytes = bytesRead
                     }
                 }
             }
@@ -224,6 +312,7 @@ class DownloadRepository(private val context: Context) {
             it.copy(
                 status = DownloadStatus.COMPLETED,
                 progress = 1f,
+                speedBytesPerSec = 0L,
                 bytesDownloaded = bytesRead,
                 totalBytes = if (totalBytes > 0) totalBytes else bytesRead
             )
@@ -255,7 +344,9 @@ class DownloadRepository(private val context: Context) {
                     totalBytes = task.totalBytes,
                     status = task.status.name,
                     filePath = task.filePath,
-                    error = task.error
+                    error = task.error,
+                    cmd = task.cmd,
+                    portalUrl = task.portalUrl
                 )
             }
             persistFile.writeText(json.encodeToString(data))
@@ -283,7 +374,9 @@ class DownloadRepository(private val context: Context) {
                     // Mark in-progress downloads as paused on restart
                     status = if (status == DownloadStatus.DOWNLOADING) DownloadStatus.PAUSED else status,
                     filePath = p.filePath,
-                    error = p.error
+                    error = p.error,
+                    cmd = p.cmd,
+                    portalUrl = p.portalUrl
                 )
             }
             _downloads.value = tasks

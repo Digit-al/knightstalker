@@ -183,6 +183,24 @@ class PlayerViewModel(
         }
     }
 
+    fun playLocal(path: String, name: String = "") {
+        // Local file playback — no portal link needed. Leaving currentItemId
+        // empty disables watch-history saving for downloaded files.
+        currentItemId = ""
+        currentCmd = path
+        currentType = "local"
+        _state.update { it.copy(channelName = name, error = null, isBuffering = true) }
+
+        val file = java.io.File(path)
+        if (!file.exists()) {
+            _state.update { it.copy(error = "File not found", isBuffering = false) }
+            return
+        }
+        player.setMediaItem(MediaItem.fromUri(android.net.Uri.fromFile(file)))
+        player.prepare()
+        player.play()
+    }
+
     fun resumeFromHistory() {
         val pos = _state.value.resumePositionMs
         if (pos > 0) {

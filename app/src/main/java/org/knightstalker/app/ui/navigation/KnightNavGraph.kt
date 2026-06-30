@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -32,6 +33,7 @@ import org.knightstalker.app.ui.player.PlayerViewModel
 import org.knightstalker.app.ui.portal.PortalEditScreen
 import org.knightstalker.app.ui.portal.PortalListScreen
 import org.knightstalker.app.ui.portal.PortalViewModel
+import org.knightstalker.app.data.repository.DownloadStatus
 import org.knightstalker.app.ui.downloads.DownloadsScreen
 import org.knightstalker.app.ui.settings.SettingsScreen
 import org.knightstalker.app.ui.settings.SettingsViewModel
@@ -231,6 +233,37 @@ private fun HomeScreen(
         onDispose { remoteKeyHandler = null }
     }
 
+    // On startup, if downloads were interrupted (left Paused when the app last
+    // closed), ask once whether to resume them. Resuming re-mints a fresh play
+    // link, so we wait until Home — i.e. the portal is connected — to offer it.
+    val downloads by module.downloadRepository.downloads.collectAsState()
+    var resumePromptHandled by rememberSaveable { mutableStateOf(false) }
+    val resumable = downloads.filter { it.status == DownloadStatus.PAUSED }
+    if (!resumePromptHandled && resumable.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { resumePromptHandled = true },
+            title = { Text("Resume downloads?") },
+            text = {
+                Text(
+                    "You have ${resumable.size} unfinished download" +
+                        (if (resumable.size > 1) "s" else "") + ". Resume now?"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    resumePromptHandled = true
+                    resumable.forEach { module.downloadRepository.resumeDownload(it.id) }
+                }) { Text("Resume", color = Accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { resumePromptHandled = true }) {
+                    Text("Not now", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
+
     Scaffold(
         containerColor = DarkBackground,
         bottomBar = {
@@ -289,7 +322,8 @@ private fun HomeScreen(
                         },
                         onPlayVod = { cmd ->
                             navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
-                        }
+                        },
+                        onOpenDownloads = { goToTab("downloads") }
                     )
                 }
 
@@ -305,7 +339,8 @@ private fun HomeScreen(
                         },
                         onPlayVod = { cmd ->
                             navController.navigate(NavRoute.Player.createRoute("series", cmd, ""))
-                        }
+                        },
+                        onOpenDownloads = { goToTab("downloads") }
                     )
                 }
 
@@ -337,7 +372,15 @@ private fun HomeScreen(
                 }
 
                 composable("downloads") {
-                    DownloadsScreen(downloadRepository = module.downloadRepository)
+                    DownloadsScreen(
+                        downloadRepository = module.downloadRepository,
+                        onPlay = { task ->
+                            val path = task.filePath
+                            if (path != null) {
+                                navController.navigate(NavRoute.Player.createRoute("local", path, task.name))
+                            }
+                        }
+                    )
                 }
 
                 composable("settings") {
