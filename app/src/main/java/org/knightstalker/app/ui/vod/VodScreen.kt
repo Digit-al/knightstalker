@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -68,18 +69,44 @@ fun VodScreen(
         }
 
         Column(modifier = Modifier.weight(1f)) {
-            // Non-blocking indexing banner while the local index is being built/refreshed.
+            // Non-blocking indexing banner (label + progress bar) while the local
+            // index is being built/refreshed. CRAWLING shows determinate progress;
+            // the short DELTA refresh shows an indeterminate bar.
             if ((state.syncStatus == "CRAWLING" || state.syncStatus == "DELTA") &&
                 state.totalItemsRemote > 0
             ) {
-                Text(
-                    text = "Indexing ${state.itemsIndexed} / ${state.totalItemsRemote}…",
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.labelMedium,
+                val crawling = state.syncStatus == "CRAWLING"
+                val fraction = (state.itemsIndexed.toFloat() / state.totalItemsRemote)
+                    .coerceIn(0f, 1f)
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 6.dp)
-                )
+                ) {
+                    Text(
+                        text = if (crawling)
+                            "Indexing ${state.itemsIndexed} / ${state.totalItemsRemote} · ${(fraction * 100).toInt()}%"
+                        else
+                            "Refreshing library…",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    if (crawling) {
+                        LinearProgressIndicator(
+                            progress = { fraction },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp)
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp)
+                        )
+                    }
+                }
             }
 
             Box(modifier = Modifier.fillMaxSize()) {
