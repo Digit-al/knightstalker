@@ -73,6 +73,29 @@ class StalkerAuthManager(private val api: StalkerApi) {
         return true
     }
 
+    /**
+     * Re-perform the handshake for the active portal and update [currentToken] in place so
+     * the existing auth interceptor immediately picks up the fresh token. Used by the sync
+     * engine to recover from a token expiry mid-crawl. Returns true on success.
+     */
+    suspend fun reHandshake(): Boolean {
+        val portal = currentPortal ?: return false
+        return try {
+            val hs = api.handshake(portal.url)
+            val token = hs.getOrNull()?.js?.token
+            if (token.isNullOrEmpty()) {
+                false
+            } else {
+                currentToken = token
+                api.doAuth(portal.url)
+                true
+            }
+        } catch (e: Exception) {
+            Log.w("StalkerAuth", "reHandshake failed: ${e.message}")
+            false
+        }
+    }
+
     fun disconnect() {
         watchdogJob?.cancel()
         watchdogJob = null

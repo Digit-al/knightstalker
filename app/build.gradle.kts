@@ -78,6 +78,10 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
+    implementation(libs.room.paging)
+    implementation(libs.paging.runtime.ktx)
+    implementation(libs.paging.compose)
+    implementation(libs.work.runtime.ktx)
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)

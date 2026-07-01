@@ -4,17 +4,25 @@ package org.knightstalker.app.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.knightstalker.app.data.local.prefs.UserPreferences
+import org.knightstalker.app.data.local.sync.MediaKind
+import org.knightstalker.app.data.local.sync.SyncEngine
 import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.repository.MediaIndexRepository
 import org.knightstalker.app.data.repository.PortalRepository
+import org.knightstalker.app.data.repository.VodRepository
+import org.knightstalker.app.data.local.prefs.UserPreferences.Companion.DEFAULT_CATEGORY_FALLBACK
 import org.knightstalker.app.domain.model.Portal
 
 data class SettingsState(
     val bufferSizeMs: Int = 5000,
     val autoPlay: Boolean = true,
+    val defaultCategory: String = DEFAULT_CATEGORY_FALLBACK,
+    val categories: List<String> = emptyList(),
     val connectedPortal: Portal? = null,
     val portalUrl: String = "",
     val portalMac: String = "",
@@ -22,13 +30,23 @@ data class SettingsState(
     val isSaving: Boolean = false,
     val saveSuccess: Boolean = false,
     val importSuccess: Boolean = false,
-    val connectionState: ConnectionState = ConnectionState.DISCONNECTED
+    val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
+    // --- Library (local media index) ---
+    val autoUpdateOnOpen: Boolean = true,
+    val movieCount: Int = 0,
+    val seriesCount: Int = 0,
+    val movieStatus: String = "IDLE",
+    val seriesStatus: String = "IDLE",
+    val lastSyncAt: Long = 0L
 )
 
 class SettingsViewModel(
     private val preferences: UserPreferences,
     private val authManager: StalkerAuthManager,
-    private val portalRepository: PortalRepository
+    private val portalRepository: PortalRepository,
+    private val vodRepository: VodRepository,
+    private val mediaIndexRepository: MediaIndexRepository,
+    private val syncEngine: SyncEngine
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsState())
@@ -46,6 +64,21 @@ class SettingsViewModel(
             }
         }
         viewModelScope.launch {
+            preferences.defaultCategory.collect { cat ->
+                _state.update { it.copy(defaultCategory = cat) }
+            }
+        }
+        viewModelScope.launch {
+            authManager.connectionState.collect { connState ->
+                if (connState == ConnectionState.CONNECTED && _state.value.categories.isEmpty()) {
+                    val portal = authManager.currentPortal ?: return@collect
+                    vodRepository.getCategories(portal.url).onSuccess { cats ->
+                        _state.update { it.copy(categories = cats.map { c -> c.title }) }
+                    }
+                }
+            }
+        }
+        viewModelScope.launch {
             authManager.connectionState.collect { connState ->
                 val portal = authManager.currentPortal
                 _state.update {
@@ -59,6 +92,58 @@ class SettingsViewModel(
                 }
             }
         }
+        observeLibrary()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeLibrary() {
+        viewModelScope.launch {
+            preferences.autoUpdateOnOpen.collect { v ->
+                _state.update { it.copy(autoUpdateOnOpen = v) }
+            }
+        }
+        // Item counts follow the active portal (re-subscribe when it changes).
+        viewModelScope.launch {
+            authManager.connectionState.flatMapLatest {
+                val pid = authManager.currentPortal?.id ?: return@flatMapLatest flowOf(0)
+                mediaIndexRepository.observeMovieCount(pid)
+            }.collect { c -> _state.update { it.copy(movieCount = c) } }
+        }
+        viewModelScope.launch {
+            authManager.connectionState.flatMapLatest {
+                val pid = authManager.currentPortal?.id ?: return@flatMapLatest flowOf(0)
+                mediaIndexRepository.observeSeriesCount(pid)
+            }.collect { c -> _state.update { it.copy(seriesCount = c) } }
+        }
+        // Index status + last full-sync time (sync-state is keyed by kind, not portal).
+        viewModelScope.launch {
+            syncEngine.status(MediaKind.MOVIE).collect { st ->
+                _state.update {
+                    it.copy(
+                        movieStatus = st?.status ?: "IDLE",
+                        lastSyncAt = maxOf(it.lastSyncAt, st?.lastFullSyncAt ?: 0L)
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            syncEngine.status(MediaKind.SERIES).collect { st ->
+                _state.update {
+                    it.copy(
+                        seriesStatus = st?.status ?: "IDLE",
+                        lastSyncAt = maxOf(it.lastSyncAt, st?.lastFullSyncAt ?: 0L)
+                    )
+                }
+            }
+        }
+    }
+
+    fun setAutoUpdateOnOpen(enabled: Boolean) {
+        viewModelScope.launch { preferences.setAutoUpdateOnOpen(enabled) }
+    }
+
+    fun rebuildLibrary() {
+        syncEngine.rebuildLibrary()
     }
 
     fun setBufferSize(ms: Int) {
@@ -67,6 +152,10 @@ class SettingsViewModel(
 
     fun setAutoPlay(enabled: Boolean) {
         viewModelScope.launch { preferences.setAutoPlay(enabled) }
+    }
+
+    fun setDefaultCategory(name: String) {
+        viewModelScope.launch { preferences.setDefaultCategory(name) }
     }
 
     fun updatePortalUrl(url: String) {
@@ -115,11 +204,17 @@ class SettingsViewModel(
     class Factory(
         private val preferences: UserPreferences,
         private val authManager: StalkerAuthManager,
-        private val portalRepository: PortalRepository
+        private val portalRepository: PortalRepository,
+        private val vodRepository: VodRepository,
+        private val mediaIndexRepository: MediaIndexRepository,
+        private val syncEngine: SyncEngine
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return SettingsViewModel(preferences, authManager, portalRepository) as T
+            return SettingsViewModel(
+                preferences, authManager, portalRepository, vodRepository,
+                mediaIndexRepository, syncEngine
+            ) as T
         }
     }
 }

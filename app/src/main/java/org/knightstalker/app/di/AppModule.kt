@@ -5,7 +5,12 @@ import android.content.Context
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import org.knightstalker.app.data.local.db.KnightDatabase
+import org.knightstalker.app.data.local.db.MediaIndexDatabase
+import org.knightstalker.app.data.local.db.MovieIndexDao
+import org.knightstalker.app.data.local.db.SeriesIndexDao
+import org.knightstalker.app.data.local.db.SyncStateDao
 import org.knightstalker.app.data.local.prefs.UserPreferences
+import org.knightstalker.app.data.local.sync.SyncEngine
 import org.knightstalker.app.data.remote.StalkerApi
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.remote.interceptor.MacCookieInterceptor
@@ -45,6 +50,21 @@ class AppModule(private val context: Context) {
 
     private val database: KnightDatabase by lazy {
         KnightDatabase.create(context)
+    }
+
+    private val mediaIndexDatabase: MediaIndexDatabase by lazy {
+        MediaIndexDatabase.create(context)
+    }
+    val movieIndexDao: MovieIndexDao by lazy { mediaIndexDatabase.movieIndexDao() }
+    val seriesIndexDao: SeriesIndexDao by lazy { mediaIndexDatabase.seriesIndexDao() }
+    val syncStateDao: SyncStateDao by lazy { mediaIndexDatabase.syncStateDao() }
+
+    val mediaIndexRepository: MediaIndexRepository by lazy {
+        MediaIndexRepository(movieIndexDao, seriesIndexDao, syncStateDao)
+    }
+
+    val syncEngine: SyncEngine by lazy {
+        SyncEngine(context, stalkerApi, authManager, movieIndexDao, seriesIndexDao, syncStateDao, userPreferences)
     }
 
     val userPreferences: UserPreferences by lazy {

@@ -4,23 +4,33 @@ package org.knightstalker.app.ui.vod
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
+import androidx.paging.map
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import org.knightstalker.app.data.local.db.FtsQuery
+import org.knightstalker.app.data.local.entity.MediaIndexRow
 import org.knightstalker.app.data.local.prefs.UserPreferences
+import org.knightstalker.app.data.local.sync.MediaKind
+import org.knightstalker.app.data.local.sync.SyncEngine
 import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.FavoriteRepository
+import org.knightstalker.app.data.repository.MediaIndexRepository
 import org.knightstalker.app.data.repository.VodRepository
 import org.knightstalker.app.domain.model.VodCategory
 import org.knightstalker.app.domain.model.VodItem
 
 enum class ContentMode { Vod, Series }
 
-/** Sort orders exposed in the Movies/Series header. [api] is the Stalker
- *  `get_ordered_list` sortby value; the portal returns these descending. */
+/** Sort orders exposed in the Movies/Series header. [api] doubles as the stable
+ *  id used by the sidebar dropdown; ordering is now served by the local index. */
 enum class VodSort(val api: String, val label: String) {
     Added("added", "Date added"),
     Rating("rating", "Review"),
@@ -29,20 +39,16 @@ enum class VodSort(val api: String, val label: String) {
 
 data class VodState(
     val categories: List<VodCategory> = emptyList(),
-    val items: List<VodItem> = emptyList(),
+    val items: Flow<PagingData<VodItem>> = flowOf(PagingData.empty()),
     val selectedCategory: String = "*",
-    val isLoading: Boolean = true,
     val error: String? = null,
-    val currentPage: Int = 1,
-    val totalItems: Int = 0,
-    val hasMore: Boolean = false,
     val selectedVod: VodItem? = null,
     val favoriteCategoryIds: Set<String> = emptySet(),
     val searchQuery: String = "",
     val sortBy: VodSort = VodSort.Rating,
-    // Raw number of items fetched from the server so far (before any client-side
-    // filtering), used to drive pagination independently of the visible count.
-    val rawLoaded: Int = 0
+    val syncStatus: String = "IDLE",   // IDLE | CRAWLING | DELTA | ERROR
+    val itemsIndexed: Int = 0,
+    val totalItemsRemote: Int = 0
 )
 
 class VodViewModel(
@@ -51,18 +57,38 @@ class VodViewModel(
     private val downloadRepository: DownloadRepository,
     private val authManager: StalkerAuthManager,
     private val preferences: UserPreferences,
+    private val mediaIndexRepository: MediaIndexRepository,
+    private val syncEngine: SyncEngine,
     private val mode: ContentMode = ContentMode.Vod
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(VodState())
     val state: StateFlow<VodState> = _state.asStateFlow()
 
+    private val kind: MediaKind =
+        if (mode == ContentMode.Vod) MediaKind.MOVIE else MediaKind.SERIES
+
     init {
         viewModelScope.launch {
             authManager.connectionState.collect { connState ->
                 if (connState == ConnectionState.CONNECTED && _state.value.categories.isEmpty()) {
+                    // loadCategories() lands on the configured default category and
+                    // (re)builds the local-index pager. The grid binds to Room from
+                    // frame one regardless of index size.
                     loadCategories()
-                    loadVodList()
+                    rebuildPager()
+                    syncEngine.ensureFresh(kind)
+                    launch {
+                        syncEngine.status(kind).collect { st ->
+                            _state.update {
+                                it.copy(
+                                    syncStatus = st?.status ?: "IDLE",
+                                    itemsIndexed = st?.itemsIndexed ?: 0,
+                                    totalItemsRemote = st?.totalItemsRemote ?: 0
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -86,85 +112,94 @@ class VodViewModel(
             }
             result.onSuccess { cats ->
                 val favsCategory = VodCategory(id = "favs", title = "★ Favorites", alias = "favorites")
-                _state.update { it.copy(categories = listOf(cats.first(), favsCategory) + cats.drop(1)) }
+                val full = listOf(cats.first(), favsCategory) + cats.drop(1)
+                _state.update { it.copy(categories = full) }
+                // Land on the configured default category if it exists in this mode
+                // (it's a movie category, so Series falls back to "All").
+                val defaultName = preferences.defaultCategory.first()
+                val target = normalizeName(defaultName)
+                val match = full.firstOrNull { normalizeName(it.title) == target }
+                    ?: full.firstOrNull { target.isNotEmpty() && normalizeName(it.title).contains(target) }
+                if (match != null) selectCategory(match.id)
             }
         }
     }
 
-    fun loadVodList(categoryId: String? = null, page: Int = 1) {
-        val portal = authManager.currentPortal ?: return
-        _state.update { it.copy(isLoading = true, error = null) }
-
-        viewModelScope.launch {
-            val catId = categoryId ?: _state.value.selectedCategory
-            val search = _state.value.searchQuery.takeIf { it.isNotBlank() }
-            val sortBy = _state.value.sortBy.api
-            val result = when (mode) {
-                ContentMode.Vod -> vodRepository.getVodList(portal.url, portal.id, catId, page, search, sortBy)
-                ContentMode.Series -> vodRepository.getSeriesList(portal.url, portal.id, catId, page, search, sortBy)
-            }
-            val sort = _state.value.sortBy
-            result
-                .onSuccess { (items, total) ->
-                    // When sorting by Review, drop items the portal has no rating
-                    // for — otherwise they sort to the very top as "N/A". Pagination
-                    // tracks the raw server count so loading more keeps surfacing
-                    // rated titles even when a page is mostly un-rated.
-                    val display = if (sort == VodSort.Rating) {
-                        items.filter { hasRating(it.rating) }
-                    } else items
-                    _state.update {
-                        val rawLoaded = if (page == 1) items.size else it.rawLoaded + items.size
-                        val accumulated = if (page == 1) display else it.items + display
-                        // The portal ignores `sortby` once a category is selected, so
-                        // enforce the order client-side for the fields we have.
-                        it.copy(
-                            items = sortItems(accumulated, sort),
-                            isLoading = false,
-                            currentPage = page,
-                            totalItems = total,
-                            rawLoaded = rawLoaded,
-                            hasMore = items.isNotEmpty() && rawLoaded < total,
-                            selectedCategory = catId
-                        )
-                    }
-                }
-                .onFailure { e ->
-                    _state.update { it.copy(isLoading = false, error = e.message) }
-                }
+    /** Build the Compose-facing PagingData flow from the local index for the
+     *  current category / sort / search state. Browse never touches the network. */
+    private fun rebuildPager() {
+        val portal = authManager.currentPortal ?: run {
+            // Cannot resolve a portal -> degrade gracefully to an empty grid. Emit an
+            // explicit empty page (not emptyFlow(), which never emits and would leave the
+            // grid stuck on a loading spinner) so VodScreen renders its empty state.
+            _state.update { it.copy(items = flowOf(PagingData.empty())) }
+            return
         }
+        val cat = _state.value.selectedCategory
+        if (cat == "favs") {
+            loadFavoriteVod()
+            return
+        }
+
+        val q = _state.value.searchQuery.trim()
+        val sortToken = when (_state.value.sortBy) {
+            VodSort.Rating -> "RATING"
+            VodSort.Year -> "YEAR"
+            VodSort.Added -> "ADDED"
+        }
+        val categoryId = if (cat == "*") null else cat
+        val excludeAdult = if (cat == "*") 1 else 0                              // "All" hides adult
+        val ratedOnly = if (_state.value.sortBy == VodSort.Rating) 1 else 0      // Review = rated only
+        // Build the FTS string first, then derive hasQuery from it. A query made up
+        // entirely of metacharacters (e.g. "***" or "():") sanitizes to "", which is an
+        // invalid FTS MATCH expression and would crash SQLite. Treating an empty result
+        // as "no query" keeps the grid showing the unfiltered list instead.
+        val ftsQuery = FtsQuery.build(q)
+        val hasQuery = if (ftsQuery.isNotBlank()) 1 else 0
+
+        val flow = Pager(PagingConfig(pageSize = 60, enablePlaceholders = false)) {
+            when (mode) {
+                ContentMode.Vod -> mediaIndexRepository.pageMovies(
+                    portal.id, categoryId, excludeAdult, ratedOnly, null, hasQuery, ftsQuery, sortToken
+                )
+                ContentMode.Series -> mediaIndexRepository.pageSeries(
+                    portal.id, categoryId, excludeAdult, ratedOnly, null, hasQuery, ftsQuery, sortToken
+                )
+            }
+        }.flow.map { data -> data.map { it.toVodItem() } }.cachedIn(viewModelScope)
+
+        _state.update { it.copy(items = flow) }
     }
+
+    private fun MediaIndexRow.toVodItem() = VodItem(
+        id = itemId,
+        name = name,
+        cmd = cmd,
+        logo = posterUrl.ifEmpty { null },
+        year = year?.toString(),
+        genre = genresCsv.ifEmpty { null },
+        rating = rating?.toString(),
+        duration = durationMin?.toString(),
+        director = director.ifEmpty { null },
+        actors = actors.ifEmpty { null },
+        isFavorite = false
+    )
 
     fun selectCategory(categoryId: String) {
-        _state.update { it.copy(selectedCategory = categoryId, items = emptyList()) }
-        if (categoryId == "favs") {
-            loadFavoriteVod()
-        } else {
-            loadVodList(categoryId, 1)
-        }
+        _state.update { it.copy(selectedCategory = categoryId) }
+        rebuildPager()
     }
 
     fun setSortBy(sort: VodSort) {
         if (_state.value.sortBy == sort) return
-        _state.update { it.copy(sortBy = sort, items = emptyList(), rawLoaded = 0) }
-        val cat = _state.value.selectedCategory
-        if (cat == "favs") loadFavoriteVod() else loadVodList(cat, 1)
+        _state.update { it.copy(sortBy = sort) }
+        rebuildPager()
     }
 
-    // A rating counts as present only if it parses to a positive number;
-    // "N/A", "", "0" and other non-numeric values are treated as unrated.
-    private fun hasRating(rating: String?): Boolean =
-        rating?.trim()?.toFloatOrNull()?.let { it > 0f } ?: false
-
-    // Client-side ordering, applied because the portal drops `sortby` for
-    // category queries. Date added keeps the server's natural order (we have
-    // no per-item added timestamp to sort by). Stable so equal keys keep their
-    // server order.
-    private fun sortItems(items: List<VodItem>, sort: VodSort): List<VodItem> = when (sort) {
-        VodSort.Rating -> items.sortedByDescending { it.rating?.trim()?.toFloatOrNull() ?: 0f }
-        VodSort.Year -> items.sortedByDescending { it.year?.trim()?.take(4)?.toIntOrNull() ?: 0 }
-        VodSort.Added -> items
-    }
+    // Strip everything but letters/digits and lowercase, so category titles that
+    // differ only by spacing or pipe placement still compare equal.
+    private fun normalizeName(s: String): String =
+        s.lowercase().filter { it.isLetterOrDigit() }
 
     private var searchJob: Job? = null
     fun setSearchQuery(query: String) {
@@ -172,35 +207,23 @@ class VodViewModel(
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             delay(400)
-            _state.update { it.copy(items = emptyList()) }
-            loadVodList(page = 1)
+            rebuildPager()
         }
     }
 
     private fun loadFavoriteVod() {
         val portal = authManager.currentPortal ?: return
-        _state.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            favoriteRepository.getFavoriteVod(portal.id).first().let { favorites ->
-                val items = favorites.map { fav ->
-                    VodItem(
-                        id = fav.channelId,
-                        name = fav.name,
-                        cmd = fav.cmd,
-                        logo = fav.logo,
-                        isFavorite = true
-                    )
-                }
-                _state.update {
-                    it.copy(items = items, isLoading = false, hasMore = false, totalItems = items.size)
-                }
+            val list = favoriteRepository.getFavoriteVod(portal.id).first().map { fav ->
+                VodItem(
+                    id = fav.channelId,
+                    name = fav.name,
+                    cmd = fav.cmd,
+                    logo = fav.logo,
+                    isFavorite = true
+                )
             }
-        }
-    }
-
-    fun loadMore() {
-        if (_state.value.hasMore && !_state.value.isLoading) {
-            loadVodList(page = _state.value.currentPage + 1)
+            _state.update { it.copy(items = flowOf(PagingData.from(list))) }
         }
     }
 
@@ -214,9 +237,6 @@ class VodViewModel(
             favoriteRepository.toggleVodFavorite(vod, portal.id)
             _state.update { state ->
                 state.copy(
-                    items = state.items.map {
-                        if (it.id == vod.id) it.copy(isFavorite = !it.isFavorite) else it
-                    },
                     selectedVod = state.selectedVod?.let {
                         if (it.id == vod.id) it.copy(isFavorite = !it.isFavorite) else it
                     }
@@ -247,11 +267,16 @@ class VodViewModel(
         private val downloadRepository: DownloadRepository,
         private val authManager: StalkerAuthManager,
         private val preferences: UserPreferences,
+        private val mediaIndexRepository: MediaIndexRepository,
+        private val syncEngine: SyncEngine,
         private val mode: ContentMode = ContentMode.Vod
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return VodViewModel(vodRepository, favoriteRepository, downloadRepository, authManager, preferences, mode) as T
+            return VodViewModel(
+                vodRepository, favoriteRepository, downloadRepository, authManager,
+                preferences, mediaIndexRepository, syncEngine, mode
+            ) as T
         }
     }
 }

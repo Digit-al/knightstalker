@@ -17,12 +17,17 @@ class UserPreferences(private val context: Context) {
         val BUFFER_SIZE_MS = intPreferencesKey("buffer_size_ms")
         val AUTO_PLAY = booleanPreferencesKey("auto_play")
         val FAVORITE_CATEGORIES = stringSetPreferencesKey("favorite_categories")
+        val DEFAULT_CATEGORY = stringPreferencesKey("default_category")
+        val AUTO_UPDATE_ON_OPEN = booleanPreferencesKey("auto_update_on_open")
+        const val DEFAULT_CATEGORY_FALLBACK = "|FR| BOX OFFICE"
     }
 
     val lastPortalId: Flow<Long?> = context.dataStore.data.map { it[LAST_PORTAL_ID] }
     val bufferSizeMs: Flow<Int> = context.dataStore.data.map { it[BUFFER_SIZE_MS] ?: 5000 }
     val autoPlay: Flow<Boolean> = context.dataStore.data.map { it[AUTO_PLAY] ?: true }
     val favoriteCategories: Flow<Set<String>> = context.dataStore.data.map { it[FAVORITE_CATEGORIES] ?: emptySet() }
+    val defaultCategory: Flow<String> = context.dataStore.data.map { it[DEFAULT_CATEGORY] ?: DEFAULT_CATEGORY_FALLBACK }
+    val autoUpdateOnOpen: Flow<Boolean> = context.dataStore.data.map { it[AUTO_UPDATE_ON_OPEN] ?: true }
 
     suspend fun setLastPortalId(id: Long) {
         context.dataStore.edit { it[LAST_PORTAL_ID] = id }
@@ -34,6 +39,14 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setAutoPlay(enabled: Boolean) {
         context.dataStore.edit { it[AUTO_PLAY] = enabled }
+    }
+
+    suspend fun setDefaultCategory(name: String) {
+        context.dataStore.edit { it[DEFAULT_CATEGORY] = name }
+    }
+
+    suspend fun setAutoUpdateOnOpen(enabled: Boolean) {
+        context.dataStore.edit { it[AUTO_UPDATE_ON_OPEN] = enabled }
     }
 
     suspend fun toggleFavoriteCategory(categoryId: String) {

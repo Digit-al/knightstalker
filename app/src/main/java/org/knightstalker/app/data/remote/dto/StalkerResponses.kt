@@ -124,5 +124,14 @@ data class VodData(
     @SerialName("rating_kinopoisk") val ratingKinopoisk: String = "",
     val time: String = "",
     val director: String = "",
-    val actors: String = ""
+    val actors: String = "",
+    // --- added for the local index ---
+    @SerialName("o_name") val oName: String = "",
+    @SerialName("category_id") val categoryId: String = "",
+    @SerialName("added") val added: String = "",
+    @SerialName("rate") val rate: String = "",
+    @SerialName("tmdb_id") val tmdbId: String = "",
+    @SerialName("is_series") val isSeries: Int = 0,
+    @SerialName("is_movie") val isMovie: Int = 0,
+    @SerialName("censored") val censored: Int = 0
 )

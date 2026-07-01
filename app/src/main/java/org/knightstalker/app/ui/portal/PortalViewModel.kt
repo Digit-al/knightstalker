@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import org.knightstalker.app.data.local.prefs.UserPreferences
 import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.repository.MediaIndexRepository
 import org.knightstalker.app.data.repository.PortalRepository
 import org.knightstalker.app.domain.model.Portal
 
@@ -23,7 +24,8 @@ data class PortalListState(
 class PortalViewModel(
     private val portalRepository: PortalRepository,
     private val authManager: StalkerAuthManager,
-    private val preferences: UserPreferences
+    private val preferences: UserPreferences,
+    private val mediaIndexRepository: MediaIndexRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PortalListState())
@@ -82,6 +84,8 @@ class PortalViewModel(
                 authManager.disconnect()
             }
             portalRepository.delete(portal)
+            // Drop the deleted portal's local media index rows (rebuildable cache).
+            mediaIndexRepository.clearPortal(portal.id)
         }
     }
 
@@ -100,11 +104,12 @@ class PortalViewModel(
     class Factory(
         private val portalRepository: PortalRepository,
         private val authManager: StalkerAuthManager,
-        private val preferences: UserPreferences
+        private val preferences: UserPreferences,
+        private val mediaIndexRepository: MediaIndexRepository
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return PortalViewModel(portalRepository, authManager, preferences) as T
+            return PortalViewModel(portalRepository, authManager, preferences, mediaIndexRepository) as T
         }
     }
 }

@@ -86,7 +86,7 @@ fun KnightNavGraph() {
         // Portal list
         composable(NavRoute.Portals.route) {
             val vm: PortalViewModel = viewModel(
-                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences)
+                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences, module.mediaIndexRepository)
             )
             PortalListScreen(
                 viewModel = vm,
@@ -107,7 +107,7 @@ fun KnightNavGraph() {
         ) { entry ->
             val id = entry.arguments?.getLong("id") ?: 0L
             val vm: PortalViewModel = viewModel(
-                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences)
+                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences, module.mediaIndexRepository)
             )
             val portals by vm.state.collectAsState()
             val portal = portals.portals.find { it.id == id }
@@ -313,7 +313,7 @@ private fun HomeScreen(
 
                 composable("vod") {
                     val vm: VodViewModel = viewModel(
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, ContentMode.Vod)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, ContentMode.Vod)
                     )
                     VodScreen(
                         viewModel = vm,
@@ -330,7 +330,7 @@ private fun HomeScreen(
                 composable("series") {
                     val vm: VodViewModel = viewModel(
                         key = "series",
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, ContentMode.Series)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, ContentMode.Series)
                     )
                     VodScreen(
                         viewModel = vm,
@@ -385,7 +385,7 @@ private fun HomeScreen(
 
                 composable("settings") {
                     val vm: SettingsViewModel = viewModel(
-                        factory = SettingsViewModel.Factory(module.userPreferences, module.authManager, module.portalRepository)
+                        factory = SettingsViewModel.Factory(module.userPreferences, module.authManager, module.portalRepository, module.vodRepository, module.mediaIndexRepository, module.syncEngine)
                     )
                     SettingsScreen(
                         viewModel = vm,

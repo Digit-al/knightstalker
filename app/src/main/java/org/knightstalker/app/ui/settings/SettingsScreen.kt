@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,8 +17,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -38,6 +41,12 @@ private data class QrPortalData(
     val u: String,
     val m: String
 )
+
+private fun formatLastSync(epochMillis: Long): String {
+    if (epochMillis <= 0L) return "Never"
+    val fmt = java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault())
+    return fmt.format(java.util.Date(epochMillis))
+}
 
 private fun generateQrBitmap(content: String, size: Int = 512): Bitmap {
     val writer = QRCodeWriter()
@@ -332,6 +341,148 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Manage All Portals")
+                }
+            }
+        }
+
+        // Content settings
+        Card(colors = CardDefaults.cardColors(containerColor = CardBackground)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Content", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Category shown when you open Movies / Series",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Text("Default category", style = MaterialTheme.typography.bodyLarge)
+                Spacer(modifier = Modifier.height(6.dp))
+                var categoryMenu by remember { mutableStateOf(false) }
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(DarkSurfaceVariant)
+                            .clickable { categoryMenu = true }
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            state.defaultCategory,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = TextSecondary)
+                    }
+                    DropdownMenu(
+                        expanded = categoryMenu,
+                        onDismissRequest = { categoryMenu = false },
+                        modifier = Modifier.heightIn(max = 360.dp)
+                    ) {
+                        state.categories.forEach { cat ->
+                            DropdownMenuItem(
+                                text = { Text(cat) },
+                                onClick = {
+                                    categoryMenu = false
+                                    viewModel.setDefaultCategory(cat)
+                                },
+                                leadingIcon = {
+                                    if (cat == state.defaultCategory) {
+                                        Icon(Icons.Default.Check, contentDescription = null, tint = Accent)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // --- Library (local media index) ---
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = DarkSurfaceVariant)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text("Library", style = MaterialTheme.typography.bodyLarge)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Local index served to Movies / Series browsing",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                val indexing = state.movieStatus == "CRAWLING" || state.movieStatus == "DELTA" ||
+                    state.seriesStatus == "CRAWLING" || state.seriesStatus == "DELTA"
+                val error = state.movieStatus == "ERROR" || state.seriesStatus == "ERROR"
+                val statusLabel = when {
+                    indexing -> "Indexing…"
+                    error -> "Error"
+                    else -> "Idle"
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Status", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    Text(
+                        statusLabel,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (error) Accent else if (indexing) Accent else SuccessGreen
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Items", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    Text(
+                        "${state.movieCount} movies · ${state.seriesCount} series",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Last sync", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    Text(formatLastSync(state.lastSyncAt), style = MaterialTheme.typography.bodyMedium)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Auto-update on open", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Refresh the index when Movies / Series opens",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                    }
+                    Switch(
+                        checked = state.autoUpdateOnOpen,
+                        onCheckedChange = { viewModel.setAutoUpdateOnOpen(it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Accent, checkedTrackColor = Accent.copy(alpha = 0.5f))
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = { viewModel.rebuildLibrary() },
+                    enabled = !indexing,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Rebuild library now")
                 }
             }
         }

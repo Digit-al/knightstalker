@@ -3,6 +3,8 @@ package org.knightstalker.app.data.remote
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -15,8 +17,13 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
 
     private val resolvedApiBase = mutableMapOf<String, String>()
 
+    // Serializes probe resolution so that under concurrent access only one thread probes a
+    // given cache miss; the rest wait and then observe the cached result (double-checked below).
+    private val resolveMutex = Mutex()
+
     private fun buildUrl(baseUrl: String, type: String, action: String, params: Map<String, String> = emptyMap()): String {
-        val serverPath = resolvedApiBase[baseUrl] ?: buildFallbackPath(baseUrl)
+        val cached = synchronized(resolvedApiBase) { resolvedApiBase[baseUrl] }
+        val serverPath = cached ?: buildFallbackPath(baseUrl)
         val urlBuilder = serverPath.toHttpUrl().newBuilder()
             .addQueryParameter("type", type)
             .addQueryParameter("action", action)
@@ -32,11 +39,23 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
     }
 
     suspend fun resolveApiBase(baseUrl: String): String {
-        resolvedApiBase[baseUrl]?.let { return it }
+        synchronized(resolvedApiBase) { resolvedApiBase[baseUrl] }?.let { return it }
 
+        // Serialize resolution and double-check the cache: a concurrent caller may have already
+        // resolved and cached this baseUrl while we were waiting for the lock, in which case we
+        // must reuse its result instead of launching a redundant probe.
+        return resolveMutex.withLock {
+            synchronized(resolvedApiBase) { resolvedApiBase[baseUrl] }
+                ?: resolveApiBaseLocked(baseUrl)
+        }
+    }
+
+    private suspend fun resolveApiBaseLocked(baseUrl: String): String {
         val base = baseUrl.trimEnd('/')
         if (base.contains("/server/load.php") || base.contains("/portal.php")) {
-            resolvedApiBase[baseUrl] = base
+            // A baseUrl that already targets a .php endpoint needs no probe, but it has NOT been
+            // proven to genuinely succeed, so do not persist it to the cache (only verified
+            // HTTP 200 + JSON probes are cached below).
             return base
         }
 
@@ -57,7 +76,11 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
         }
         candidates.add("$origin/portal.php")
 
-        val resolved = withContext(Dispatchers.IO) {
+        // Probe candidates. A candidate is only accepted (and cached) when it GENUINELY
+        // succeeds (HTTP 200 + JSON body). Transient failures — DNS/network exceptions or
+        // non-200 responses — must NOT poison the cache, otherwise a wrong fallback would be
+        // pinned until the process restarts. Return null here means "nothing resolved".
+        val resolved: String? = withContext(Dispatchers.IO) {
             for (candidate in candidates) {
                 try {
                     val testUrl = candidate.toHttpUrl().newBuilder()
@@ -78,14 +101,45 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
                     Log.d("StalkerApi", "Probing $candidate -> ${e.message}")
                 }
             }
-            "$base/server/load.php"
+            null
         }
-        Log.d("StalkerApi", "Resolved API base for $baseUrl -> $resolved")
-        resolvedApiBase[baseUrl] = resolved
-        return resolved
+
+        if (resolved != null) {
+            Log.d("StalkerApi", "Resolved API base for $baseUrl -> $resolved")
+            synchronized(resolvedApiBase) { resolvedApiBase[baseUrl] = resolved }
+            return resolved
+        }
+
+        // No probe actually resolved (e.g. a startup DNS failure). Return a best-effort
+        // fallback WITHOUT caching it, so the next connect attempt re-probes once the
+        // network recovers rather than being stuck on a wrong, pinned base.
+        val fallback = "$base/server/load.php"
+        Log.d("StalkerApi", "No probe resolved for $baseUrl, returning uncached fallback $fallback")
+        return fallback
     }
 
-    private suspend fun <T> get(url: String, deserializer: kotlinx.serialization.DeserializationStrategy<T>): Result<T> {
+    /**
+     * Evict a cached resolved base after a request against it returned HTTP 404, so the next
+     * [resolveApiBase] call re-probes instead of repeatedly hitting a stale/wrong base. The
+     * caller passes the full request URL; we match it back to the [resolvedApiBase] entry whose
+     * value is a prefix of that URL. This only removes an entry — it never retries — so it
+     * cannot cause a retry storm.
+     */
+    private fun evictResolvedBaseFor(url: String) {
+        synchronized(resolvedApiBase) {
+            val entry = resolvedApiBase.entries.firstOrNull { url.startsWith(it.value) }
+            if (entry != null) {
+                Log.d("StalkerApi", "Evicting cached API base ${entry.value} for ${entry.key} after HTTP 404")
+                resolvedApiBase.remove(entry.key)
+            }
+        }
+    }
+
+    private suspend fun <T> get(
+        url: String,
+        deserializer: kotlinx.serialization.DeserializationStrategy<T>,
+        evictBaseOn404: Boolean = false,
+    ): Result<T> {
         return withContext(Dispatchers.IO) {
             try {
                 Log.d("StalkerApi", "URL: $url")
@@ -96,6 +150,14 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
                 val response = actualRequest
                 Log.d("StalkerApi", "RESPONSE ${response.code} headers=${response.headers}")
                 if (!response.isSuccessful) {
+                    if (response.code == 404 && evictBaseOn404) {
+                        // Only evict for base-validating endpoints (e.g. handshake): a 404 there
+                        // means the resolved path itself is wrong (e.g. resolved during a DNS
+                        // blip), so drop it to force a re-probe. Per-item 404s from data
+                        // endpoints (a missing genre/category/channel) must NOT evict a
+                        // correct base.
+                        evictResolvedBaseFor(url)
+                    }
                     return@withContext Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
                 }
                 val rawBody = response.body?.string() ?: ""
@@ -117,7 +179,7 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
 
     suspend fun handshake(baseUrl: String): Result<StalkerResponse<HandshakeData>> {
         val url = buildUrl(baseUrl, "stb", "handshake")
-        return get(url, StalkerResponse.serializer(HandshakeData.serializer()))
+        return get(url, StalkerResponse.serializer(HandshakeData.serializer()), evictBaseOn404 = true)
     }
 
     suspend fun getProfile(baseUrl: String): Result<StalkerResponse<ProfileData>> {
