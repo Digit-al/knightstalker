@@ -1,5 +1,15 @@
+# Mirror of the authoritative F-Droid metadata at
+# gitlab.com/fdroid/fdroiddata/-/blob/master/metadata/org.knightstalker.app.yml
+# F-Droid does NOT read this copy; it is kept here for reference only.
+# Note: this app is a VERIFIED REPRODUCIBLE BUILD (see Binaries + AllowedAPKSigningKeys).
+# Each release also needs its signed, 16 KB-aligned APK published to the GitLab
+# package registry — a git tag alone does not publish. CurrentVersion is bumped
+# automatically by F-Droid (AutoUpdateMode: Version) once that APK exists.
+AntiFeatures:
+  NonFreeNet:
+    en-US: Connects to third-party Stalker middleware IPTV portals
 Categories:
-  - Multimedia
+  - Online Media Player
 License: GPL-3.0-or-later
 AuthorName: hc51t
 SourceCode: https://gitlab.com/hc51t/knightstalker
@@ -9,16 +19,25 @@ AutoName: KnightStalker
 
 RepoType: git
 Repo: https://gitlab.com/hc51t/knightstalker.git
+Binaries: https://gitlab.com/api/v4/projects/80256163/packages/generic/knightstalker/%v/knightstalker-%v.apk
 
 Builds:
-  - versionName: '1.0.0'
+  - versionName: 1.0.0
     versionCode: 1
-    commit: c25fd1312082cd47bbc7e0402d6174402b0d2e06
+    commit: 3e485d1d87b6ca99716377a2edd36765476836d2
     subdir: app
     gradle:
       - yes
+    srclibs:
+      - reproducible-apk-tools@v0.3.0
+    postbuild:
+      - mv $$OUT$$ unaligned.apk
+      - $$reproducible-apk-tools$$/zipalign.py --page-size 16 --pad-like-apksigner
+        --replace unaligned.apk $$OUT$$
+
+AllowedAPKSigningKeys: b11fe3c47b09c0088ed351db9a2012991e90fea0e9ffaa53f6e27f8a682311aa
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: '1.0.0'
+CurrentVersion: 1.0.0
 CurrentVersionCode: 1
