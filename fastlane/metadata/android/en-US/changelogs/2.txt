@@ -1,0 +1,7 @@
+Series, faster browsing, and a better player.
+
+* Local media index (Room + FTS) for instant sort, filter, and search
+* Series: season/episode picker with watched-tracking, resume, and "next episode" prompts
+* Player: subtitle and audio track selection, plus D-pad friendly controls
+* Improved downloads: resume, speed/ETA, and playback that remembers your position
+* Movies/Series default to the Review sort
