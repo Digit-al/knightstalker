@@ -27,7 +27,9 @@ fun VodScreen(
     viewModel: VodViewModel,
     onVodClick: (String, String) -> Unit,
     onPlayVod: (String) -> Unit,
-    onOpenDownloads: () -> Unit = {}
+    onOpenDownloads: () -> Unit = {},
+    isSeries: Boolean = false,
+    onPlayEpisode: (seasonCmd: String, episode: Int, episodes: List<Int>, seriesName: String) -> Unit = { _, _, _, _ -> }
 ) {
     val state by viewModel.state.collectAsState()
     val gridState = rememberLazyGridState()
@@ -36,17 +38,31 @@ fun VodScreen(
     // Detail overlay
     state.selectedVod?.let { vod ->
         BackHandler { viewModel.selectVod(null) }
-        VodDetailScreen(
-            vod = vod,
-            onPlay = { onPlayVod(vod.cmd) },
-            onDownload = {
-                viewModel.downloadVod(vod)
-                viewModel.selectVod(null)
-                onOpenDownloads()
-            },
-            onToggleFavorite = { viewModel.toggleFavorite(vod) },
-            onDismiss = { viewModel.selectVod(null) }
-        )
+        if (isSeries) {
+            // Series: pick a season/episode instead of playing the (cmd-less) series.
+            SeriesDetailScreen(
+                series = vod,
+                seasons = state.seasons,
+                loading = state.seasonsLoading,
+                error = state.seasonsError,
+                episodeProgress = state.episodeProgress,
+                nextEpisode = state.nextEpisode,
+                onPlay = { seasonCmd, ep, eps -> onPlayEpisode(seasonCmd, ep, eps, vod.name) },
+                onDismiss = { viewModel.selectVod(null) }
+            )
+        } else {
+            VodDetailScreen(
+                vod = vod,
+                onPlay = { onPlayVod(vod.cmd) },
+                onDownload = {
+                    viewModel.downloadVod(vod)
+                    viewModel.selectVod(null)
+                    onOpenDownloads()
+                },
+                onToggleFavorite = { viewModel.toggleFavorite(vod) },
+                onDismiss = { viewModel.selectVod(null) }
+            )
+        }
         return
     }
 

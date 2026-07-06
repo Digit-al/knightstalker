@@ -16,6 +16,11 @@ interface WatchHistoryDao {
     @Query("SELECT * FROM watch_history WHERE itemId = :itemId AND portalId = :portalId")
     suspend fun getEntry(itemId: String, portalId: Long): WatchHistoryEntity?
 
+    // All entries whose itemId starts with the given prefix (used to fetch every
+    // watched episode of a series/season, keyed "episode:<seasonCmd>:<n>").
+    @Query("SELECT * FROM watch_history WHERE portalId = :portalId AND itemId LIKE :prefix || '%'")
+    suspend fun getByPrefix(portalId: Long, prefix: String): List<WatchHistoryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entry: WatchHistoryEntity)
 

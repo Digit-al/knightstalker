@@ -24,6 +24,10 @@ import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.FavoriteRepository
 import org.knightstalker.app.data.repository.MediaIndexRepository
 import org.knightstalker.app.data.repository.VodRepository
+import org.knightstalker.app.data.repository.WatchHistoryRepository
+import org.knightstalker.app.domain.model.EpisodeProgress
+import org.knightstalker.app.domain.model.NextEpisode
+import org.knightstalker.app.domain.model.Season
 import org.knightstalker.app.domain.model.VodCategory
 import org.knightstalker.app.domain.model.VodItem
 
@@ -48,7 +52,15 @@ data class VodState(
     val sortBy: VodSort = VodSort.Rating,
     val syncStatus: String = "IDLE",   // IDLE | CRAWLING | DELTA | ERROR
     val itemsIndexed: Int = 0,
-    val totalItemsRemote: Int = 0
+    val totalItemsRemote: Int = 0,
+    // Seasons/episodes for the selected series (Series mode only).
+    val seasons: List<Season> = emptyList(),
+    val seasonsLoading: Boolean = false,
+    val seasonsError: String? = null,
+    // Per-season episode watch state (seasonCmd -> episode -> progress) and the
+    // computed next episode to watch for the selected series.
+    val episodeProgress: Map<String, Map<Int, EpisodeProgress>> = emptyMap(),
+    val nextEpisode: NextEpisode? = null
 )
 
 class VodViewModel(
@@ -59,11 +71,14 @@ class VodViewModel(
     private val preferences: UserPreferences,
     private val mediaIndexRepository: MediaIndexRepository,
     private val syncEngine: SyncEngine,
+    private val watchHistoryRepository: WatchHistoryRepository,
     private val mode: ContentMode = ContentMode.Vod
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(VodState())
     val state: StateFlow<VodState> = _state.asStateFlow()
+
+    val isSeries: Boolean = mode == ContentMode.Series
 
     private val kind: MediaKind =
         if (mode == ContentMode.Vod) MediaKind.MOVIE else MediaKind.SERIES
@@ -228,7 +243,60 @@ class VodViewModel(
     }
 
     fun selectVod(vod: VodItem?) {
-        _state.update { it.copy(selectedVod = vod) }
+        _state.update { it.copy(selectedVod = vod, seasons = emptyList(), seasonsError = null) }
+        // A top-level series has no directly-playable cmd; load its seasons so the
+        // user can pick an episode instead of the player erroring on an empty cmd.
+        if (vod != null && mode == ContentMode.Series) loadSeasons(vod.id)
+    }
+
+    private fun loadSeasons(seriesId: String) {
+        val portal = authManager.currentPortal ?: return
+        _state.update { it.copy(seasonsLoading = true, seasonsError = null, episodeProgress = emptyMap(), nextEpisode = null) }
+        viewModelScope.launch {
+            vodRepository.getSeriesSeasons(portal.url, seriesId)
+                .onSuccess { seasons ->
+                    _state.update { it.copy(seasons = seasons, seasonsLoading = false) }
+                    loadEpisodeProgress(seasons)
+                }
+                .onFailure { e ->
+                    _state.update { it.copy(seasonsLoading = false, seasonsError = e.message) }
+                }
+        }
+    }
+
+    /** Load watched state for every season and compute the next episode to watch. */
+    private fun loadEpisodeProgress(seasons: List<Season>) {
+        val portalId = authManager.currentPortal?.id ?: return
+        viewModelScope.launch {
+            val progress = seasons.associate { season ->
+                val entries = watchHistoryRepository.getSeasonProgress(portalId, season.cmd)
+                season.cmd to entries.mapValues { (_, e) ->
+                    EpisodeProgress(finished = e.isFinished, fraction = e.progressPercent)
+                }
+            }
+            _state.update { it.copy(episodeProgress = progress, nextEpisode = computeNextEpisode(seasons, progress)) }
+        }
+    }
+
+    // Resume the first in-progress episode; otherwise the first unwatched one.
+    private fun computeNextEpisode(
+        seasons: List<Season>,
+        progress: Map<String, Map<Int, EpisodeProgress>>
+    ): NextEpisode? {
+        var firstUnwatched: NextEpisode? = null
+        seasons.forEachIndexed { si, season ->
+            val seasonLabel = "S${si + 1}"
+            for (ep in season.episodes.sorted()) {
+                val p = progress[season.cmd]?.get(ep)
+                if (p != null && !p.finished && p.fraction > 0.02f) {
+                    return NextEpisode(si, season.cmd, ep, season.episodes, "Resume $seasonLabel E$ep", resume = true)
+                }
+                if (firstUnwatched == null && (p == null || !p.finished)) {
+                    firstUnwatched = NextEpisode(si, season.cmd, ep, season.episodes, "Play $seasonLabel E$ep", resume = false)
+                }
+            }
+        }
+        return firstUnwatched
     }
 
     fun toggleFavorite(vod: VodItem) {
@@ -269,13 +337,14 @@ class VodViewModel(
         private val preferences: UserPreferences,
         private val mediaIndexRepository: MediaIndexRepository,
         private val syncEngine: SyncEngine,
+        private val watchHistoryRepository: WatchHistoryRepository,
         private val mode: ContentMode = ContentMode.Vod
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return VodViewModel(
                 vodRepository, favoriteRepository, downloadRepository, authManager,
-                preferences, mediaIndexRepository, syncEngine, mode
+                preferences, mediaIndexRepository, syncEngine, watchHistoryRepository, mode
             ) as T
         }
     }

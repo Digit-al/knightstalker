@@ -135,3 +135,21 @@ data class VodData(
     @SerialName("is_movie") val isMovie: Int = 0,
     @SerialName("censored") val censored: Int = 0
 )
+
+@Serializable
+data class SeriesSeasonListData(
+    val total_items: Int = 0,
+    val max_page_items: Int = 0,
+    val data: List<SeasonData> = emptyList()
+)
+
+@Serializable
+data class SeasonData(
+    val id: String = "",
+    val name: String = "",
+    val cmd: String = "",
+    // Season poster (usually a TMDB image URL); reused as an episode thumbnail.
+    @SerialName("screenshot_uri") val screenshotUri: String = "",
+    // Episode numbers available in this season, e.g. [1, 2, 3, ...].
+    @SerialName("series") val episodes: List<Int> = emptyList()
+)

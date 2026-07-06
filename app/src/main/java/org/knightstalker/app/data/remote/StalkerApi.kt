@@ -209,10 +209,25 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
         return get(url, StalkerResponse.serializer(ChannelListData.serializer()))
     }
 
-    suspend fun createLink(baseUrl: String, cmd: String, type: String = "itv"): Result<StalkerResponse<CreateLinkData>> {
-        val params = mapOf("cmd" to cmd, "forced_storage" to "undefined", "disable_ad" to "0")
+    suspend fun createLink(baseUrl: String, cmd: String, type: String = "itv", series: Int? = null): Result<StalkerResponse<CreateLinkData>> {
+        val params = buildMap {
+            put("cmd", cmd)
+            put("forced_storage", "undefined")
+            put("disable_ad", "0")
+            // For series episodes the play link is minted from the season cmd plus
+            // the episode number passed as `series`.
+            if (series != null) put("series", series.toString())
+        }
         val url = buildUrl(baseUrl, type, "create_link", params)
         return get(url, StalkerResponse.serializer(CreateLinkData.serializer()))
+    }
+
+    /** Seasons for a series. Each season carries its own cmd and the list of
+     *  episode numbers it contains (the `series` field). */
+    suspend fun getSeriesSeasons(baseUrl: String, seriesId: String): Result<StalkerResponse<SeriesSeasonListData>> {
+        val params = mapOf("movie_id" to seriesId, "p" to "1")
+        val url = buildUrl(baseUrl, "series", "get_ordered_list", params)
+        return get(url, StalkerResponse.serializer(SeriesSeasonListData.serializer()))
     }
 
     suspend fun getShortEpg(baseUrl: String, channelId: String): Result<StalkerResponse<ShortEpgData>> {

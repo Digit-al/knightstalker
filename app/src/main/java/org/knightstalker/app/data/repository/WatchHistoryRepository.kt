@@ -19,6 +19,15 @@ class WatchHistoryRepository(private val dao: WatchHistoryDao) {
         return dao.getEntry(itemId, portalId)
     }
 
+    /** Watched episodes of a season, mapped by episode number. Keys are parsed from
+     *  the "episode:<seasonCmd>:<n>" itemId scheme used by episode playback. */
+    suspend fun getSeasonProgress(portalId: Long, seasonCmd: String): Map<Int, WatchHistoryEntity> {
+        val prefix = "episode:$seasonCmd:"
+        return dao.getByPrefix(portalId, prefix).mapNotNull { entry ->
+            entry.itemId.removePrefix(prefix).toIntOrNull()?.let { ep -> ep to entry }
+        }.toMap()
+    }
+
     suspend fun savePosition(
         itemId: String,
         portalId: Long,

@@ -313,7 +313,7 @@ private fun HomeScreen(
 
                 composable("vod") {
                     val vm: VodViewModel = viewModel(
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, ContentMode.Vod)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, ContentMode.Vod)
                     )
                     VodScreen(
                         viewModel = vm,
@@ -330,17 +330,23 @@ private fun HomeScreen(
                 composable("series") {
                     val vm: VodViewModel = viewModel(
                         key = "series",
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, ContentMode.Series)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, ContentMode.Series)
                     )
                     VodScreen(
                         viewModel = vm,
-                        onVodClick = { id, cmd ->
-                            navController.navigate(NavRoute.Player.createRoute("series", cmd, ""))
-                        },
-                        onPlayVod = { cmd ->
-                            navController.navigate(NavRoute.Player.createRoute("series", cmd, ""))
-                        },
-                        onOpenDownloads = { goToTab("downloads") }
+                        onVodClick = { _, _ -> },
+                        onPlayVod = { },
+                        onOpenDownloads = { goToTab("downloads") },
+                        isSeries = true,
+                        onPlayEpisode = { seasonCmd, episode, episodes, seriesName ->
+                            navController.navigate(
+                                NavRoute.Player.createRoute(
+                                    "episode",
+                                    "$seasonCmd|$episode|${episodes.joinToString(",")}",
+                                    seriesName
+                                )
+                            )
+                        }
                     )
                 }
 
