@@ -2,6 +2,7 @@
 package org.knightstalker.app.ui.settings
 
 import android.graphics.Bitmap
+import org.knightstalker.app.BuildConfig
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -527,7 +528,7 @@ fun SettingsScreen(
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("About", style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("KnightStalker v1.0.0", style = MaterialTheme.typography.bodyMedium)
+                Text("KnightStalker v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
                 Text("Open source Stalker IPTV client", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text("License: GPL-3.0-or-later", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
