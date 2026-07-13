@@ -29,7 +29,9 @@ data class PlayerState(
     val isBuffering: Boolean = true,
     val error: String? = null,
     val channelName: String = "",
-    val showControls: Boolean = true,
+    // Start hidden — the player begins playback clean; controls appear only on demand
+    // (tap / any remote key), then auto-hide again after a few seconds.
+    val showControls: Boolean = false,
     val isDownloading: Boolean = false,
     val downloadProgress: Float = 0f,
     val downloadComplete: Boolean = false,
