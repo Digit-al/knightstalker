@@ -23,6 +23,7 @@ import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.FavoriteRepository
 import org.knightstalker.app.data.repository.MediaIndexRepository
+import org.knightstalker.app.data.repository.SeriesRatingRepository
 import org.knightstalker.app.data.repository.VodRepository
 import org.knightstalker.app.data.repository.WatchHistoryRepository
 import org.knightstalker.app.domain.model.EpisodeProgress
@@ -72,6 +73,7 @@ class VodViewModel(
     private val mediaIndexRepository: MediaIndexRepository,
     private val syncEngine: SyncEngine,
     private val watchHistoryRepository: WatchHistoryRepository,
+    private val seriesRatingRepository: SeriesRatingRepository,
     private val mode: ContentMode = ContentMode.Vod
 ) : ViewModel() {
 
@@ -164,7 +166,10 @@ class VodViewModel(
         }
         val categoryId = if (cat == "*") null else cat
         val excludeAdult = if (cat == "*") 1 else 0                              // "All" hides adult
-        val ratedOnly = if (_state.value.sortBy == VodSort.Rating) 1 else 0      // Review = rated only
+        // Review = rated only, for movies. Series ratings are enriched lazily from TVmaze,
+        // so keep unrated series visible (NULLs sort last) — otherwise they'd be hidden
+        // here and never scroll into view to get fetched.
+        val ratedOnly = if (mode == ContentMode.Vod && _state.value.sortBy == VodSort.Rating) 1 else 0
         // Build the FTS string first, then derive hasQuery from it. A query made up
         // entirely of metacharacters (e.g. "***" or "():") sanitizes to "", which is an
         // invalid FTS MATCH expression and would crash SQLite. Treating an empty result
@@ -239,6 +244,19 @@ class VodViewModel(
                 )
             }
             _state.update { it.copy(items = flowOf(PagingData.from(list))) }
+        }
+    }
+
+    /**
+     * Lazily fetch & cache a real TVmaze rating for a series as it scrolls into view.
+     * No-op for movies and when there's no active portal; the repository dedupes and
+     * throttles, and skips titles already checked.
+     */
+    fun ensureSeriesRating(vod: VodItem) {
+        if (mode != ContentMode.Series) return
+        val portalId = authManager.currentPortal?.id ?: return
+        viewModelScope.launch {
+            seriesRatingRepository.ensureRating(portalId, vod.id, vod.name, vod.year?.toIntOrNull())
         }
     }
 
@@ -338,13 +356,15 @@ class VodViewModel(
         private val mediaIndexRepository: MediaIndexRepository,
         private val syncEngine: SyncEngine,
         private val watchHistoryRepository: WatchHistoryRepository,
+        private val seriesRatingRepository: SeriesRatingRepository,
         private val mode: ContentMode = ContentMode.Vod
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             return VodViewModel(
                 vodRepository, favoriteRepository, downloadRepository, authManager,
-                preferences, mediaIndexRepository, syncEngine, watchHistoryRepository, mode
+                preferences, mediaIndexRepository, syncEngine, watchHistoryRepository,
+                seriesRatingRepository, mode
             ) as T
         }
     }

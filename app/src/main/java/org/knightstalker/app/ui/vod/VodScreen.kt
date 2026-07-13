@@ -154,6 +154,10 @@ fun VodScreen(
                                 key = pagingItems.itemKey { it.id }
                             ) { index ->
                                 pagingItems[index]?.let { vod ->
+                                    if (viewModel.isSeries) {
+                                        // Enrich this series' rating from TVmaze as it scrolls in.
+                                        LaunchedEffect(vod.id) { viewModel.ensureSeriesRating(vod) }
+                                    }
                                     VodCard(
                                         vod = vod,
                                         onClick = { viewModel.selectVod(vod) }

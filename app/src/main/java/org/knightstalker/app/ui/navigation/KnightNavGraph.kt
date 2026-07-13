@@ -313,7 +313,7 @@ private fun HomeScreen(
 
                 composable("vod") {
                     val vm: VodViewModel = viewModel(
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, ContentMode.Vod)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, module.seriesRatingRepository, ContentMode.Vod)
                     )
                     VodScreen(
                         viewModel = vm,
@@ -330,7 +330,7 @@ private fun HomeScreen(
                 composable("series") {
                     val vm: VodViewModel = viewModel(
                         key = "series",
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, ContentMode.Series)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, module.seriesRatingRepository, ContentMode.Series)
                     )
                     VodScreen(
                         viewModel = vm,

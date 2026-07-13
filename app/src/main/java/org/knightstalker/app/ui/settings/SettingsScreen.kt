@@ -532,6 +532,12 @@ fun SettingsScreen(
                 Text("Open source Stalker IPTV client", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
                 Spacer(modifier = Modifier.height(4.dp))
                 Text("License: GPL-3.0-or-later", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Series ratings by TVmaze (CC BY-SA)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
             }
         }
     }

@@ -48,6 +48,15 @@ class AppModule(private val context: Context) {
         StalkerApi(okHttpClient, json)
     }
 
+    // A plain client for third-party lookups (TVmaze) — deliberately WITHOUT the Stalker
+    // MAC-cookie / auth interceptors so we never leak portal credentials to other hosts.
+    private val plainHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val database: KnightDatabase by lazy {
         KnightDatabase.create(context)
     }
@@ -93,6 +102,10 @@ class AppModule(private val context: Context) {
 
     val watchHistoryRepository: WatchHistoryRepository by lazy {
         WatchHistoryRepository(database.watchHistoryDao())
+    }
+
+    val seriesRatingRepository: SeriesRatingRepository by lazy {
+        SeriesRatingRepository(plainHttpClient, json, seriesIndexDao)
     }
 
     val downloadRepository: DownloadRepository by lazy {

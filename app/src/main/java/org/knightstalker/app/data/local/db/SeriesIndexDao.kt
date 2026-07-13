@@ -42,6 +42,14 @@ interface SeriesIndexDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(rows: List<SeriesIndexEntity>)
 
+    /** When this series' rating was last checked on TVmaze (0/null = never). */
+    @Query("SELECT ratingCheckedAt FROM series_index WHERE portalId = :portalId AND itemId = :itemId")
+    suspend fun ratingCheckedAt(portalId: Long, itemId: String): Long?
+
+    /** Store a looked-up rating (nullable when TVmaze had none) and stamp it as checked. */
+    @Query("UPDATE series_index SET rating = :rating, ratingCheckedAt = :checkedAt WHERE portalId = :portalId AND itemId = :itemId")
+    suspend fun updateRating(portalId: Long, itemId: String, rating: Double?, checkedAt: Long)
+
     @Query("SELECT COUNT(*) FROM series_index WHERE portalId = :portalId")
     fun observeCount(portalId: Long): Flow<Int>
 

@@ -24,11 +24,15 @@ object MediaIndexMapper {
     private val leadingDigits = Regex("^(\\d+)")
 
     /**
-     * rating_imdb -> rating_kinopoisk -> rate; "N/A"/""/"0"/non-numeric -> null;
-     * accepts comma decimals; clamps 0..10.
+     * rating_imdb -> rating_kinopoisk; "N/A"/""/"0"/non-numeric -> null; accepts comma
+     * decimals; clamps 0..10.
+     *
+     * NOTE: the portal's `rate` field is deliberately NOT used — it is an internal counter,
+     * not a review score, and for series it is usually a bogus "10" that surfaced as a fake
+     * ★10.0 on every show. `rate` is still accepted as a parameter for call-site symmetry.
      */
     fun parseRating(imdb: String, kinopoisk: String, rate: String): Double? {
-        for (candidate in listOf(imdb, kinopoisk, rate)) {
+        for (candidate in listOf(imdb, kinopoisk)) {
             val trimmed = candidate.trim()
             if (trimmed.isEmpty() || trimmed.equals("N/A", ignoreCase = true)) continue
             val value = trimmed.replace(',', '.').toDoubleOrNull() ?: continue

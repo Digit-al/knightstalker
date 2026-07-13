@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 
@@ -33,5 +34,11 @@ data class SeriesIndexEntity(
     override val tmdbId: String?,
     override val actors: String,
     override val director: String,
-    override val syncEpoch: Long
+    override val syncEpoch: Long,
+    // Epoch millis when this series' rating was last looked up on TVmaze; 0 = never.
+    // Guards the lazy, cached rating enrichment (see SeriesRatingRepository).
+    // defaultValue matches the ALTER TABLE ... DEFAULT 0 in MEDIA_MIGRATION_1_2 so Room's
+    // schema validation passes.
+    @ColumnInfo(defaultValue = "0")
+    val ratingCheckedAt: Long = 0L
 ) : MediaIndexRow
