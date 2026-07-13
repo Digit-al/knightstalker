@@ -11,9 +11,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -28,6 +32,8 @@ fun VodDetailScreen(
     onToggleFavorite: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val playFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { playFocus.requestFocus() }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -109,7 +115,9 @@ fun VodDetailScreen(
                     Button(
                         onClick = onPlay,
                         colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                        modifier = Modifier.height(48.dp)
+                        modifier = Modifier
+                            .height(48.dp)
+                            .focusRequester(playFocus)
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))

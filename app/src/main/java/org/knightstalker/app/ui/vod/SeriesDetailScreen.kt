@@ -18,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,6 +42,13 @@ fun SeriesDetailScreen(
     onDismiss: () -> Unit
 ) {
     var selectedSeason by remember(seasons) { mutableStateOf(0) }
+
+    // Focus the "continue / next unseen" action once it's available (episodes load async),
+    // rather than leaving focus on the Back button.
+    val playFocus = remember { FocusRequester() }
+    LaunchedEffect(nextEpisode) {
+        if (nextEpisode != null) playFocus.requestFocus()
+    }
 
     Box(
         modifier = Modifier
@@ -74,7 +83,8 @@ fun SeriesDetailScreen(
                 if (nextEpisode != null) {
                     Button(
                         onClick = { onPlay(nextEpisode.seasonCmd, nextEpisode.episode, nextEpisode.episodes) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent)
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                        modifier = Modifier.focusRequester(playFocus)
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null, tint = TextPrimary)
                         Spacer(Modifier.width(6.dp))
