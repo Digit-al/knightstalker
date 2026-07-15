@@ -1,0 +1,6 @@
+Better ratings, focus, and player.
+
+* Series now show real ratings from TVmaze instead of a bogus 10.0
+* Movie/series detail opens focused on Play (or Resume), not Back
+* The player starts clean — controls appear only when you ask for them
+* Fixes the version shown on the About screen
