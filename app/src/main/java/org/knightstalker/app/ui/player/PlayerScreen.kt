@@ -425,7 +425,30 @@ fun PlayerScreen(
                                 thumbColor = Accent,
                                 activeTrackColor = Accent
                             ),
-                            modifier = Modifier.focusRequester(sliderFocus)
+                            // D-pad Left/Right must seek reliably on Android TV. Material3's
+                            // built-in Slider key handling is eaten by the focus system there,
+                            // so seek explicitly (and keep the event, so focus stays on the bar).
+                            // Preview (not onKeyEvent) so we intercept before Material3's own
+                            // Slider key handling, which on Android TV either eats the DPAD or
+                            // nudges by an imperceptible step.
+                            modifier = Modifier
+                                .focusRequester(sliderFocus)
+                                .onPreviewKeyEvent { ev ->
+                                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (ev.key) {
+                                        Key.DirectionRight, Key.MediaFastForward -> {
+                                            viewModel.seekForward()
+                                            positionMs = viewModel.player.currentPosition.coerceAtLeast(0)
+                                            interactionNudge++; true
+                                        }
+                                        Key.DirectionLeft, Key.MediaRewind -> {
+                                            viewModel.seekBackward()
+                                            positionMs = viewModel.player.currentPosition.coerceAtLeast(0)
+                                            interactionNudge++; true
+                                        }
+                                        else -> false
+                                    }
+                                }
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
