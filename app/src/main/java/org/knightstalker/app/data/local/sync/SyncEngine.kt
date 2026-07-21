@@ -63,8 +63,12 @@ class SyncEngine(
         val st = syncStateDao.get(kind.key)
         val now = System.currentTimeMillis()
         when {
+            // First run only: build the index once. After that, opening the app never
+            // triggers a heavy full crawl — it just deltas in newly-added content (which
+            // stops as soon as it reaches items we already have). A full reconcile (prune
+            // removed items, refresh old metadata) is on-demand via Settings ->
+            // "Rebuild library now".
             st == null || st.lastFullSyncAt == 0L -> enqueueFullCrawlWork(kind)
-            now - st.lastFullSyncAt > SyncConstants.FULL_RECONCILE_MS -> enqueueFullCrawlWork(kind)
             now - st.lastDeltaSyncAt < SyncConstants.DELTA_THROTTLE_MS -> return
             else -> scope.launch { runCatching { deltaSync(kind) } }
         }

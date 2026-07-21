@@ -8,5 +8,6 @@ object SyncConstants {
     const val UPSERT_BATCH = 500                          // rows per Room transaction
     const val DELTA_MAX_PAGES = 40                        // delta safety cap
     const val DELTA_THROTTLE_MS = 15L * 60_000L           // 15 min between deltas
-    const val FULL_RECONCILE_MS = 7L * 24L * 3_600_000L   // 7 days
+    // Full crawl is now first-run + manual only (Settings -> "Rebuild library now");
+    // startup no longer auto-full-crawls on a timer.
 }
