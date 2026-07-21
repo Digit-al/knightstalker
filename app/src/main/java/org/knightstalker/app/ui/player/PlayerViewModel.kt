@@ -2,6 +2,7 @@
 package org.knightstalker.app.ui.player
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -11,7 +12,12 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -78,6 +84,7 @@ class PlayerViewModel(
     // any connected portal — downloads are meant to play offline.
     private var currentPortalId: Long = LOCAL_PORTAL_ID
     private var positionSaveJob: Job? = null
+    private var stallJob: Job? = null
     // Latest track info from the player, used to resolve track selections.
     private var tracksRef: Tracks = Tracks.EMPTY
     // Series-episode context, for "play next episode" when one ends.
@@ -86,6 +93,27 @@ class PlayerViewModel(
     private var currentSeriesName: String = ""
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
+        // IPTV content servers stall mid-stream; the defaults (8s timeout, few
+        // retries, no cross-protocol redirects) turn a brief hiccup into a fatal
+        // "Source error". Give the data source generous timeouts, allow http<->https
+        // redirects, retry stalled loads (resumes the same URL via Range), and buffer
+        // more to ride out short stalls.
+        .setMediaSourceFactory(
+            DefaultMediaSourceFactory(
+                DefaultDataSource.Factory(
+                    context,
+                    DefaultHttpDataSource.Factory()
+                        .setConnectTimeoutMs(30_000)
+                        .setReadTimeoutMs(30_000)
+                        .setAllowCrossProtocolRedirects(true)
+                )
+            ).setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(6))
+        )
+        .setLoadControl(
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(30_000, 120_000, 2_500, 5_000)
+                .build()
+        )
         .build()
         .apply {
             addListener(object : Player.Listener {
@@ -156,6 +184,8 @@ class PlayerViewModel(
         }
         // Periodically save position while playing
         startPositionTracker()
+        // Surface an error if a stream buffers forever (dead/slow provider CDN)
+        startStallWatchdog()
     }
 
     fun playChannel(cmd: String, name: String = "") {
@@ -422,6 +452,50 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * Watchdog for dead/slow provider CDNs. Our resilient data source retries stalled
+     * reads instead of failing fast — good for brief hiccups, but a genuinely
+     * unresponsive server would otherwise buffer forever behind a black spinner. If the
+     * player stays buffering with no position progress for [STALL_TIMEOUT_MS], surface a
+     * clear error (the UI renders a Retry from it) instead of spinning indefinitely.
+     */
+    private fun startStallWatchdog() {
+        stallJob = viewModelScope.launch {
+            var lastItem: MediaItem? = null
+            var lastPos = -1L
+            var stalledSince = SystemClock.elapsedRealtime()
+            while (isActive) {
+                delay(2_000)
+                val item = player.currentMediaItem
+                if (item !== lastItem) {                 // new content -> reset baseline
+                    lastItem = item
+                    lastPos = -1L
+                    stalledSince = SystemClock.elapsedRealtime()
+                    continue
+                }
+                if (_state.value.error != null) {         // already errored -> hold the timer
+                    stalledSince = SystemClock.elapsedRealtime()
+                    continue
+                }
+                val pos = player.currentPosition
+                if (player.isPlaying || pos > lastPos) {  // progressing (or a short recoverable stall)
+                    lastPos = pos
+                    stalledSince = SystemClock.elapsedRealtime()
+                } else if (_state.value.isBuffering &&
+                    SystemClock.elapsedRealtime() - stalledSince >= STALL_TIMEOUT_MS
+                ) {
+                    _state.update {
+                        it.copy(
+                            error = "Stream unavailable — the provider's server isn't responding. " +
+                                "Try again, or pick another title.",
+                            isBuffering = false
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     private fun saveCurrentPosition() {
         if (currentItemId.isEmpty()) return
         val position = player.currentPosition
@@ -454,6 +528,7 @@ class PlayerViewModel(
     override fun onCleared() {
         saveCurrentPosition()
         positionSaveJob?.cancel()
+        stallJob?.cancel()
         player.release()
         super.onCleared()
     }
@@ -461,6 +536,9 @@ class PlayerViewModel(
     companion object {
         /** Sentinel portal id for locally-downloaded files (real portals start at 1). */
         const val LOCAL_PORTAL_ID = 0L
+
+        /** Give up buffering and show a Retry after this long with no playback progress. */
+        private const val STALL_TIMEOUT_MS = 45_000L
     }
 
     class Factory(
