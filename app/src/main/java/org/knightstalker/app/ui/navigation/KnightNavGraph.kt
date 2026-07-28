@@ -320,8 +320,8 @@ private fun HomeScreen(
                         onVodClick = { id, cmd ->
                             navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
                         },
-                        onPlayVod = { cmd ->
-                            navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
+                        onPlayVod = { cmd, name ->
+                            navController.navigate(NavRoute.Player.createRoute("vod", cmd, name))
                         },
                         onOpenDownloads = { goToTab("downloads") }
                     )
@@ -335,7 +335,7 @@ private fun HomeScreen(
                     VodScreen(
                         viewModel = vm,
                         onVodClick = { _, _ -> },
-                        onPlayVod = { },
+                        onPlayVod = { _, _ -> },
                         onOpenDownloads = { goToTab("downloads") },
                         isSeries = true,
                         onPlayEpisode = { seasonCmd, episode, episodes, seriesName ->
