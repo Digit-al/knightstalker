@@ -111,7 +111,12 @@ class PlayerViewModel(
         )
         .setLoadControl(
             DefaultLoadControl.Builder()
-                .setBufferDurationsMs(30_000, 120_000, 2_500, 5_000)
+                // Ride out stalls, but CAP the buffer in bytes: left on time-only, a
+                // high-bitrate stream can fill ExoPlayer's ~128 MB default video budget and
+                // OOM the app heap (crashes seen on the Z12). 32 MB is a safe hard ceiling.
+                .setBufferDurationsMs(15_000, 60_000, 2_500, 5_000)
+                .setTargetBufferBytes(32 * 1024 * 1024)
+                .setPrioritizeTimeOverSizeThresholds(false)
                 .build()
         )
         .build()
