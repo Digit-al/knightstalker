@@ -1,0 +1,7 @@
+Stability and playback fixes.
+
+* Fixes a crash (out of memory) during high-bitrate playback
+* Player no longer dies on brief network stalls; a clear retry appears if a stream is truly dead
+* D-pad left/right now seeks reliably on the player progress bar
+* Startup only indexes new content (full rebuild stays available in Settings)
+* Watch history now shows movie titles
