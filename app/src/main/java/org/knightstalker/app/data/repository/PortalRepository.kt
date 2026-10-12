@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.map
 import org.knightstalker.app.data.local.db.PortalDao
 import org.knightstalker.app.data.local.entity.PortalEntity
 import org.knightstalker.app.domain.model.Portal
+import org.knightstalker.app.domain.model.PortalType
 
 class PortalRepository(private val portalDao: PortalDao) {
 
@@ -22,7 +23,11 @@ class PortalRepository(private val portalDao: PortalDao) {
             id = portal.id,
             name = portal.name,
             url = portal.url,
-            macAddress = portal.macAddress
+            macAddress = portal.macAddress,
+            type = portal.type.name,
+            username = portal.username,
+            password = portal.password,
+            epgUrl = portal.epgUrl
         )
         return if (portal.id == 0L) {
             portalDao.insertPortal(entity)
@@ -34,7 +39,16 @@ class PortalRepository(private val portalDao: PortalDao) {
 
     suspend fun delete(portal: Portal) {
         portalDao.deletePortal(
-            PortalEntity(id = portal.id, name = portal.name, url = portal.url, macAddress = portal.macAddress)
+            PortalEntity(
+                id = portal.id,
+                name = portal.name,
+                url = portal.url,
+                macAddress = portal.macAddress,
+                type = portal.type.name,
+                username = portal.username,
+                password = portal.password,
+                epgUrl = portal.epgUrl
+            )
         )
     }
 
@@ -46,6 +60,10 @@ class PortalRepository(private val portalDao: PortalDao) {
         id = id,
         name = name,
         url = url,
-        macAddress = macAddress
+        macAddress = macAddress,
+        type = runCatching { PortalType.valueOf(type) }.getOrDefault(PortalType.STALKER),
+        username = username,
+        password = password,
+        epgUrl = epgUrl
     )
 }

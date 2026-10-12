@@ -13,6 +13,7 @@ import org.knightstalker.app.data.local.prefs.UserPreferences
 import org.knightstalker.app.data.local.sync.SyncEngine
 import org.knightstalker.app.data.remote.StalkerApi
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.interceptor.MacCookieInterceptor
 import org.knightstalker.app.data.remote.interceptor.StalkerAuthInterceptor
 import org.knightstalker.app.data.repository.*
@@ -27,14 +28,10 @@ class AppModule(private val context: Context) {
         explicitNulls = false
     }
 
-    val authManager: StalkerAuthManager by lazy {
-        StalkerAuthManager(stalkerApi)
-    }
-
     private val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .addInterceptor(MacCookieInterceptor(
                 macProvider = { authManager.currentPortal?.macAddress ?: "" },
@@ -46,6 +43,14 @@ class AppModule(private val context: Context) {
 
     val stalkerApi: StalkerApi by lazy {
         StalkerApi(okHttpClient, json)
+    }
+
+    val xtreamApi: XtreamCodesApi by lazy {
+        XtreamCodesApi(plainHttpClient, json)
+    }
+
+    val authManager: StalkerAuthManager by lazy {
+        StalkerAuthManager(stalkerApi, xtreamApi)
     }
 
     // A plain client for third-party lookups (TVmaze) — deliberately WITHOUT the Stalker
@@ -85,11 +90,15 @@ class AppModule(private val context: Context) {
     }
 
     val channelRepository: ChannelRepository by lazy {
-        ChannelRepository(stalkerApi, database.favoriteDao())
+        ChannelRepository(stalkerApi, database.favoriteDao(), authManager, xtreamApi)
+    }
+
+    val epgService: EpgService by lazy {
+        EpgService(plainHttpClient, database.portalDao())
     }
 
     val epgRepository: EpgRepository by lazy {
-        EpgRepository(stalkerApi)
+        EpgRepository(stalkerApi, authManager, epgService)
     }
 
     val vodRepository: VodRepository by lazy {

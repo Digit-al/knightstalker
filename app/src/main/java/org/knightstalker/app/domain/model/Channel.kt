@@ -9,6 +9,12 @@ data class Channel(
     val logo: String?,
     val genre: String?,
     val genreId: String?,
+    /**
+     * EPG lookup key for XMLTV feeds (M3U/XTREAM portals):
+     * `tvg-id` for M3U, `epg_channel_id` for Xtream. Null for Stalker channels
+     * (which resolve EPG through the Stalker API by [id]).
+     */
+    val epgKey: String? = null,
     val nowPlaying: EpgEntry? = null,
     val upNext: EpgEntry? = null,
     val isFavorite: Boolean = false

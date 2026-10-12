@@ -9,9 +9,11 @@ import kotlinx.coroutines.launch
 import org.knightstalker.app.data.local.prefs.UserPreferences
 import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.repository.EpgService
 import org.knightstalker.app.data.repository.MediaIndexRepository
 import org.knightstalker.app.data.repository.PortalRepository
 import org.knightstalker.app.domain.model.Portal
+import org.knightstalker.app.domain.model.PortalType
 
 data class PortalListState(
     val portals: List<Portal> = emptyList(),
@@ -25,7 +27,8 @@ class PortalViewModel(
     private val portalRepository: PortalRepository,
     private val authManager: StalkerAuthManager,
     private val preferences: UserPreferences,
-    private val mediaIndexRepository: MediaIndexRepository
+    private val mediaIndexRepository: MediaIndexRepository,
+    private val epgService: EpgService? = null
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PortalListState())
@@ -89,15 +92,30 @@ class PortalViewModel(
         }
     }
 
-    fun savePortal(name: String, url: String, mac: String, existingId: Long = 0) {
+    fun savePortal(
+        name: String,
+        url: String,
+        mac: String,
+        existingId: Long = 0,
+        type: PortalType = PortalType.STALKER,
+        username: String = "",
+        password: String = "",
+        epgUrl: String = ""
+    ) {
         viewModelScope.launch {
             val portal = Portal(
                 id = existingId,
                 name = name.ifEmpty { "Portal" },
                 url = url.trim(),
-                macAddress = mac.trim().uppercase()
+                macAddress = mac.trim().uppercase(),
+                type = type,
+                username = username.trim(),
+                password = password,
+                epgUrl = epgUrl.trim()
             )
             portalRepository.save(portal)
+            // The EPG URL may have changed — drop any cached feed for this portal.
+            epgService?.clearCache(portal.id)
         }
     }
 
@@ -105,11 +123,12 @@ class PortalViewModel(
         private val portalRepository: PortalRepository,
         private val authManager: StalkerAuthManager,
         private val preferences: UserPreferences,
-        private val mediaIndexRepository: MediaIndexRepository
+        private val mediaIndexRepository: MediaIndexRepository,
+        private val epgService: EpgService? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            return PortalViewModel(portalRepository, authManager, preferences, mediaIndexRepository) as T
+            return PortalViewModel(portalRepository, authManager, preferences, mediaIndexRepository, epgService) as T
         }
     }
 }

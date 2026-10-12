@@ -135,6 +135,14 @@ class StalkerApi(private val client: OkHttpClient, private val json: Json) {
         }
     }
 
+    /**
+     * Executes a raw HTTP GET and returns the response (caller owns closing it).
+     * Used for non-JSON payloads such as M3U playlists.
+     */
+    fun executeRaw(request: Request): okhttp3.Response {
+        return client.newCall(request).execute()
+    }
+
     private suspend fun <T> get(
         url: String,
         deserializer: kotlinx.serialization.DeserializationStrategy<T>,

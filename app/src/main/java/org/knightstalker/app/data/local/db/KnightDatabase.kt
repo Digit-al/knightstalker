@@ -32,9 +32,23 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
     }
 }
 
+/**
+ * v3: portals gain `type`, `username`, `password` and `epgUrl` columns so that
+ * M3U playlists and Xtream Codes panels can be configured alongside Stalker
+ * portals. Existing rows default to a plain Stalker portal.
+ */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE portals ADD COLUMN type TEXT NOT NULL DEFAULT 'STALKER'")
+        db.execSQL("ALTER TABLE portals ADD COLUMN username TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE portals ADD COLUMN password TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE portals ADD COLUMN epgUrl TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 @Database(
     entities = [PortalEntity::class, FavoriteEntity::class, WatchHistoryEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class KnightDatabase : RoomDatabase() {
@@ -49,7 +63,7 @@ abstract class KnightDatabase : RoomDatabase() {
                 KnightDatabase::class.java,
                 "knightstalker.db"
             )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .fallbackToDestructiveMigration()
                 .build()
         }

@@ -2,23 +2,74 @@
 package org.knightstalker.app.data.repository
 
 import org.knightstalker.app.data.remote.StalkerApi
+import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.remote.dto.EpgData
 import org.knightstalker.app.data.remote.dto.ShortEpgEntry
 import org.knightstalker.app.domain.model.EpgEntry
+import org.knightstalker.app.domain.model.PortalType
 
-class EpgRepository(private val api: StalkerApi) {
+class EpgRepository(
+    private val api: StalkerApi,
+    private val authManager: StalkerAuthManager,
+    private val epgService: EpgService
+) {
 
+    /**
+     * Short EPG (now / next) for a channel.
+     *  - STALKER: Stalker `get_short_epg`.
+     *  - M3U / XTREAM: XMLTV feed via [EpgService] (empty list when the portal has
+     *    no EPG configured or the channel has no matching EPG key).
+     */
     suspend fun getShortEpg(baseUrl: String, channelId: String): Result<List<EpgEntry>> {
-        return api.getShortEpg(baseUrl, channelId).map { response ->
-            val data = response.js?.entries ?: emptyList()
-            data.map { it.toDomain(channelId) }
+        val type = authManager.currentPortal?.type ?: PortalType.STALKER
+        return when (type) {
+            PortalType.M3U, PortalType.XTREAM -> {
+                val portal = authManager.currentPortal ?: return Result.failure(Exception("No portal"))
+                epgService.ensureFeed(portal.id)
+                Result.success(epgService.shortEntries(portal.id, epgKeyFor(channelId)))
+            }
+            else -> api.getShortEpg(baseUrl, channelId).map { response ->
+                val entries: List<ShortEpgEntry> = response.js?.entries ?: emptyList()
+                entries.map { it.toDomain(channelId) }
+            }
         }
     }
 
-    suspend fun getDayEpg(baseUrl: String, channelId: String, date: String): Result<List<EpgEntry>> {
-        return api.getEpg(baseUrl, channelId, date).map { response ->
-            val data = response.js?.data ?: emptyList()
-            data.map { it.toDomain() }
+    /**
+     * Full day EPG for a channel.
+     *  - STALKER: Stalker `get_simple_data_table`.
+     *  - M3U / XTREAM: XMLTV feed via [EpgService] for the requested [day].
+     */
+    suspend fun getDayEpg(baseUrl: String, channelId: String, day: String): Result<List<EpgEntry>> {
+        val type = authManager.currentPortal?.type ?: PortalType.STALKER
+        return when (type) {
+            PortalType.M3U, PortalType.XTREAM -> {
+                val portal = authManager.currentPortal ?: return Result.failure(Exception("No portal"))
+                epgService.ensureFeed(portal.id)
+                Result.success(epgService.entriesFor(portal.id, epgKeyFor(channelId), day))
+            }
+            else -> api.getEpg(baseUrl, channelId, day).map { response ->
+                val data = response.js?.data ?: emptyList()
+                data.map { it.toDomain() }
+            }
+        }
+    }
+
+    /**
+     * Resolves the XMLTV EPG key for a channel id.
+     *
+     * For M3U the channel id IS the stream URL — the key is the channel's `tvg-id`.
+     * For Xtream the channel id is the stream id — the key is its `epg_channel_id`.
+     * The channel list is looked up from the in-memory connection data.
+     */
+    private fun epgKeyFor(channelId: String): String? {
+        val portal = authManager.currentPortal ?: return null
+        return when (portal.type) {
+            PortalType.M3U -> authManager.m3uChannels
+                .firstOrNull { it.id == channelId }?.tvgId
+            PortalType.XTREAM -> authManager.xtreamStreams
+                .firstOrNull { it.stream_id == channelId }?.epg_channel_id
+            else -> null
         }
     }
 

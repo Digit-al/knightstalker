@@ -86,7 +86,7 @@ fun KnightNavGraph() {
         // Portal list
         composable(NavRoute.Portals.route) {
             val vm: PortalViewModel = viewModel(
-                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences, module.mediaIndexRepository)
+                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.epgService)
             )
             PortalListScreen(
                 viewModel = vm,
@@ -107,15 +107,15 @@ fun KnightNavGraph() {
         ) { entry ->
             val id = entry.arguments?.getLong("id") ?: 0L
             val vm: PortalViewModel = viewModel(
-                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences, module.mediaIndexRepository)
+                factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.epgService)
             )
             val portals by vm.state.collectAsState()
             val portal = portals.portals.find { it.id == id }
 
             PortalEditScreen(
                 portal = portal,
-                onSave = { name, url, mac, existingId ->
-                    vm.savePortal(name, url, mac, existingId)
+                onSave = { name, url, mac, existingId, type, username, password, epgUrl ->
+                    vm.savePortal(name, url, mac, existingId, type, username, password, epgUrl)
                     navController.popBackStack()
                 },
                 onBack = { navController.popBackStack() }

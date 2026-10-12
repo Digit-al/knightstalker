@@ -3,6 +3,8 @@ package org.knightstalker.app.ui.portal
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -18,6 +20,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.knightstalker.app.domain.model.Portal
+import org.knightstalker.app.domain.model.PortalType
 import org.knightstalker.app.ui.theme.*
 
 @Serializable
@@ -31,12 +34,19 @@ private data class QrPortalData(
 @Composable
 fun PortalEditScreen(
     portal: Portal?,
-    onSave: (name: String, url: String, mac: String, id: Long) -> Unit,
+    onSave: (
+        name: String, url: String, mac: String, existingId: Long,
+        type: PortalType, username: String, password: String, epgUrl: String
+    ) -> Unit,
     onBack: () -> Unit
 ) {
     var name by remember(portal?.id) { mutableStateOf(portal?.name ?: "") }
     var url by remember(portal?.id) { mutableStateOf(portal?.url ?: "") }
     var mac by remember(portal?.id) { mutableStateOf(portal?.macAddress ?: "00:1A:79:") }
+    var type by remember(portal?.id) { mutableStateOf(portal?.type ?: PortalType.STALKER) }
+    var username by remember(portal?.id) { mutableStateOf(portal?.username ?: "") }
+    var password by remember(portal?.id) { mutableStateOf(portal?.password ?: "") }
+    var epgUrl by remember(portal?.id) { mutableStateOf(portal?.epgUrl ?: "") }
     var scanError by remember { mutableStateOf<String?>(null) }
 
     val json = remember { Json { ignoreUnknownKeys = true } }
@@ -52,6 +62,7 @@ fun PortalEditScreen(
                     name = data.n
                     url = data.u
                     mac = data.m.ifBlank { mac }
+                    type = PortalType.STALKER
                     scanError = null
                 }
             } catch (_: Exception) {
@@ -60,7 +71,14 @@ fun PortalEditScreen(
         }
     }
 
-    val isValid = url.isNotBlank() && mac.matches(Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"))
+    val isMacValid = mac.matches(Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"))
+    val isValid = when (type) {
+        PortalType.STALKER -> url.isNotBlank() && isMacValid
+        PortalType.M3U -> url.isNotBlank()
+        PortalType.XTREAM -> url.isNotBlank() && username.isNotBlank() && password.isNotBlank()
+    }
+
+    val scrollState = rememberScrollState()
 
     Scaffold(
         topBar = {
@@ -72,25 +90,27 @@ fun PortalEditScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            scanError = null
-                            val options = ScanOptions().apply {
-                                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                setPrompt("Scan a KnightStalker QR code")
-                                setBeepEnabled(false)
-                                setOrientationLocked(false)
-                            }
-                            scanLauncher.launch(options)
-                        },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.QrCodeScanner,
-                            contentDescription = "Scan QR code",
-                            tint = TextPrimary,
-                            modifier = Modifier.size(32.dp)
-                        )
+                    if (type == PortalType.STALKER) {
+                        IconButton(
+                            onClick = {
+                                scanError = null
+                                val options = ScanOptions().apply {
+                                    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                    setPrompt("Scan a KnightStalker QR code")
+                                    setBeepEnabled(false)
+                                    setOrientationLocked(false)
+                                }
+                                scanLauncher.launch(options)
+                            },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan QR code",
+                                tint = TextPrimary,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -105,6 +125,7 @@ fun PortalEditScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(scrollState)
                 .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -121,43 +142,147 @@ fun PortalEditScreen(
                 )
             )
 
+            // Source type
+            Text("Source Type", style = MaterialTheme.typography.titleSmall, color = TextSecondary)
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                PortalType.entries.forEachIndexed { index, option ->
+                    SegmentedButton(
+                        selected = type == option,
+                        onClick = { type = option },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = index, count = PortalType.entries.size
+                        )
+                    ) {
+                        Text(option.name)
+                    }
+                }
+            }
+
+            when (type) {
+                PortalType.STALKER -> {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("Portal URL") },
+                        placeholder = { Text("http://example.com/stalker_portal") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = mac,
+                        onValueChange = { input ->
+                            // Auto-format MAC address
+                            val cleaned = input.uppercase().filter { it.isLetterOrDigit() || it == ':' }
+                            if (cleaned.length <= 17) {
+                                mac = cleaned
+                            }
+                        },
+                        label = { Text("MAC Address") },
+                        placeholder = { Text("00:1A:79:XX:XX:XX") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Ascii,
+                            capitalization = KeyboardCapitalization.Characters
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        ),
+                        supportingText = {
+                            Text("Format: XX:XX:XX:XX:XX:XX", color = TextSecondary)
+                        }
+                    )
+                }
+                PortalType.M3U -> {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("M3U / M3U8 URL") },
+                        placeholder = { Text("https://example.com/playlist.m3u") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        )
+                    )
+                    Text(
+                        "Remote playlist URL. Streams are played directly from the playlist.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+                PortalType.XTREAM -> {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("Server URL") },
+                        placeholder = { Text("http://example.com:8080") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        ),
+                        supportingText = {
+                            Text("Panel host:port (player_api.php is appended automatically)", color = TextSecondary)
+                        }
+                    )
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { username = it },
+                        label = { Text("Username") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        )
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        )
+                    )
+                }
+            }
+
+            // Optional XMLTV EPG for this portal
             OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("Portal URL") },
-                placeholder = { Text("http://example.com/stalker_portal") },
+                value = epgUrl,
+                onValueChange = { epgUrl = it },
+                label = { Text("EPG XMLTV URL (optional)") },
+                placeholder = { Text("https://epg.example.com/feed.xml") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Accent,
                     cursorColor = Accent
-                )
-            )
-
-            OutlinedTextField(
-                value = mac,
-                onValueChange = { input ->
-                    // Auto-format MAC address
-                    val cleaned = input.uppercase().filter { it.isLetterOrDigit() || it == ':' }
-                    if (cleaned.length <= 17) {
-                        mac = cleaned
-                    }
-                },
-                label = { Text("MAC Address") },
-                placeholder = { Text("00:1A:79:XX:XX:XX") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Ascii,
-                    capitalization = KeyboardCapitalization.Characters
-                ),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Accent,
-                    cursorColor = Accent
                 ),
                 supportingText = {
-                    Text("Format: XX:XX:XX:XX:XX:XX", color = TextSecondary)
+                    Text(
+                        if (type == PortalType.STALKER)
+                            "Optional: overrides the portal EPG with this XMLTV feed"
+                        else
+                            "Programme guide for M3U / Xtream channels (XMLTV)",
+                        color = TextSecondary
+                    )
                 }
             )
 
@@ -168,7 +293,9 @@ fun PortalEditScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(
-                onClick = { onSave(name, url, mac, portal?.id ?: 0) },
+                onClick = {
+                    onSave(name, url, mac, portal?.id ?: 0, type, username, password, epgUrl)
+                },
                 enabled = isValid,
                 modifier = Modifier
                     .fillMaxWidth()

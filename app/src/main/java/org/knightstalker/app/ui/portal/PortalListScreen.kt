@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.domain.model.Portal
+import org.knightstalker.app.domain.model.PortalType
 import org.knightstalker.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -154,9 +155,28 @@ private fun PortalCard(
             )
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(portal.name, style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(portal.name, style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = TextSecondary.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            portal.type.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                        )
+                    }
+                }
                 Text(portal.url, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                Text("MAC: ${portal.macAddress}", style = MaterialTheme.typography.bodySmall)
+                if (portal.type == PortalType.STALKER) {
+                    Text("MAC: ${portal.macAddress}", style = MaterialTheme.typography.bodySmall)
+                } else if (portal.type == PortalType.XTREAM) {
+                    Text("User: ${portal.username}", style = MaterialTheme.typography.bodySmall)
+                } else if (portal.epgUrl.isNotBlank()) {
+                    Text("EPG: ${portal.epgUrl}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                }
             }
             Spacer(modifier = Modifier.width(8.dp))
 
