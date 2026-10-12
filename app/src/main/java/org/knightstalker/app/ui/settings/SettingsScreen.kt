@@ -34,6 +34,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.knightstalker.app.data.remote.ConnectionState
+import org.knightstalker.app.domain.model.PortalType
 import org.knightstalker.app.ui.theme.*
 
 @Serializable
@@ -218,7 +219,7 @@ fun SettingsScreen(
                     value = state.portalUrl,
                     onValueChange = { viewModel.updatePortalUrl(it) },
                     label = { Text("Portal URL") },
-                    placeholder = { Text("http://example.com/stalker_portal") },
+                    placeholder = { Text("http://example.com") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -230,25 +231,58 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                OutlinedTextField(
-                    value = state.portalMac,
-                    onValueChange = { viewModel.updatePortalMac(it) },
-                    label = { Text("MAC Address") },
-                    placeholder = { Text("00:1A:79:XX:XX:XX") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Ascii,
-                        capitalization = KeyboardCapitalization.Characters
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Accent,
-                        cursorColor = Accent
-                    ),
-                    supportingText = {
-                        Text("Format: XX:XX:XX:XX:XX:XX", color = TextSecondary)
+                when (state.portalType) {
+                    PortalType.STALKER -> OutlinedTextField(
+                        value = state.portalMac,
+                        onValueChange = { viewModel.updatePortalMac(it) },
+                        label = { Text("MAC Address") },
+                        placeholder = { Text("00:1A:79:XX:XX:XX") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Ascii,
+                            capitalization = KeyboardCapitalization.Characters
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            cursorColor = Accent
+                        ),
+                        supportingText = {
+                            Text("Format: XX:XX:XX:XX:XX:XX", color = TextSecondary)
+                        }
+                    )
+
+                    PortalType.M3U -> Text(
+                        "Remote playlist. Streams are played directly from the playlist.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+
+                    PortalType.XTREAM -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = state.portalUsername,
+                            onValueChange = { viewModel.updatePortalUsername(it) },
+                            label = { Text("Username") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Accent,
+                                cursorColor = Accent
+                            )
+                        )
+                        OutlinedTextField(
+                            value = state.portalPassword,
+                            onValueChange = { viewModel.updatePortalPassword(it) },
+                            label = { Text("Password") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Accent,
+                                cursorColor = Accent
+                            )
+                        )
                     }
-                )
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 

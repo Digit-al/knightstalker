@@ -17,6 +17,7 @@ import org.knightstalker.app.data.repository.PortalRepository
 import org.knightstalker.app.data.repository.VodRepository
 import org.knightstalker.app.data.local.prefs.UserPreferences.Companion.DEFAULT_CATEGORY_FALLBACK
 import org.knightstalker.app.domain.model.Portal
+import org.knightstalker.app.domain.model.PortalType
 
 data class SettingsState(
     val bufferSizeMs: Int = 5000,
@@ -27,6 +28,9 @@ data class SettingsState(
     val portalUrl: String = "",
     val portalMac: String = "",
     val portalName: String = "",
+    val portalType: PortalType = PortalType.STALKER,
+    val portalUsername: String = "",
+    val portalPassword: String = "",
     val isSaving: Boolean = false,
     val saveSuccess: Boolean = false,
     val importSuccess: Boolean = false,
@@ -87,7 +91,10 @@ class SettingsViewModel(
                         connectedPortal = portal,
                         portalUrl = portal?.url ?: it.portalUrl,
                         portalMac = portal?.macAddress ?: it.portalMac,
-                        portalName = portal?.name ?: it.portalName
+                        portalName = portal?.name ?: it.portalName,
+                        portalType = portal?.type ?: it.portalType,
+                        portalUsername = portal?.username ?: it.portalUsername,
+                        portalPassword = portal?.password ?: it.portalPassword
                     )
                 }
             }
@@ -169,6 +176,14 @@ class SettingsViewModel(
         }
     }
 
+    fun updatePortalUsername(username: String) {
+        _state.update { it.copy(portalUsername = username, saveSuccess = false) }
+    }
+
+    fun updatePortalPassword(password: String) {
+        _state.update { it.copy(portalPassword = password, saveSuccess = false) }
+    }
+
     fun updatePortalName(name: String) {
         _state.update { it.copy(portalName = name, saveSuccess = false) }
     }
@@ -177,15 +192,34 @@ class SettingsViewModel(
         val current = _state.value
         val portal = current.connectedPortal ?: return
         val newUrl = current.portalUrl.trim()
-        val newMac = current.portalMac.trim().uppercase()
         val newName = current.portalName.ifBlank { portal.name }
 
-        if (newUrl.isBlank() || !newMac.matches(Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"))) return
+        // Type-specific validation
+        when (portal.type) {
+            PortalType.STALKER -> {
+                val newMac = current.portalMac.trim().uppercase()
+                if (newUrl.isBlank() || !newMac.matches(Regex("^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"))) return
+            }
+            PortalType.M3U -> {
+                if (newUrl.isBlank()) return
+            }
+            PortalType.XTREAM -> {
+                if (newUrl.isBlank() || current.portalUsername.isBlank() || current.portalPassword.isBlank()) return
+            }
+        }
 
         _state.update { it.copy(isSaving = true, saveSuccess = false) }
 
         viewModelScope.launch {
-            val updated = portal.copy(url = newUrl, macAddress = newMac, name = newName)
+            val updated = portal.copy(
+                url = newUrl,
+                macAddress = portal.type.let {
+                    if (it == PortalType.STALKER) current.portalMac.trim().uppercase() else portal.macAddress
+                },
+                name = newName,
+                username = if (portal.type == PortalType.XTREAM) current.portalUsername.trim() else portal.username,
+                password = if (portal.type == PortalType.XTREAM) current.portalPassword else portal.password
+            )
             portalRepository.save(updated)
             authManager.disconnect()
             val success = authManager.connect(updated)
