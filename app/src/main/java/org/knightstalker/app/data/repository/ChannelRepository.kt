@@ -129,7 +129,14 @@ class ChannelRepository(
     suspend fun createLink(baseUrl: String, cmd: String): Result<String> {
         val type = authManager.currentPortal?.type ?: PortalType.STALKER
         return when (type) {
-            PortalType.M3U, PortalType.XTREAM -> Result.success(cmd)
+            PortalType.M3U -> Result.success(cmd)
+            PortalType.XTREAM -> {
+                val portal = authManager.currentPortal
+                    ?: return Result.failure(Exception("No portal"))
+                Result.success(
+                    xtreamApi.buildLiveStreamUrl(portal.url, portal.username, portal.password, cmd)
+                )
+            }
             else -> api.createLink(baseUrl, cmd).map { response ->
                 val link = response.js?.cmd ?: throw Exception("No stream URL returned")
                 extractUrl(link)

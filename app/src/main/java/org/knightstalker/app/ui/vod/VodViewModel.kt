@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
+import androidx.paging.PagingSource
+import androidx.paging.PagingState
 import androidx.paging.cachedIn
 import androidx.paging.map
 import kotlinx.coroutines.Job
@@ -159,12 +161,24 @@ class VodViewModel(
         }
 
         val q = _state.value.searchQuery.trim()
+        val categoryId = if (cat == "*") null else cat
+
+        // For XTREAM / M3U portals there is no local crawl index — page directly
+        // from the remote API so the grid works the moment the portal connects.
+        if (portal.type != org.knightstalker.app.domain.model.PortalType.STALKER) {
+            val remoteSource: PagingSource<Int, VodItem> = RemoteVodPagingSource(portal, categoryId, q)
+            val remoteFlow = Pager(PagingConfig(pageSize = 60, enablePlaceholders = false)) { remoteSource }
+                .flow
+                .cachedIn(viewModelScope)
+            _state.update { it.copy(items = remoteFlow) }
+            return
+        }
+
         val sortToken = when (_state.value.sortBy) {
             VodSort.Rating -> "RATING"
             VodSort.Year -> "YEAR"
             VodSort.Added -> "ADDED"
         }
-        val categoryId = if (cat == "*") null else cat
         val excludeAdult = if (cat == "*") 1 else 0                              // "All" hides adult
         // Review = rated only, for movies. Series ratings are enriched lazily from TVmaze,
         // so keep unrated series visible (NULLs sort last) — otherwise they'd be hidden
@@ -189,6 +203,40 @@ class VodViewModel(
         }.flow.map { data -> data.map { it.toVodItem() } }.cachedIn(viewModelScope)
 
         _state.update { it.copy(items = flow) }
+    }
+
+    /**
+     * Pages a remote XTREAM / M3U catalog directly from the API, bypassing the local
+     * crawl index. The repository already filters by category/search and returns the
+     * total count, which is used here to stop paging once the last page is reached.
+     */
+    private inner class RemoteVodPagingSource(
+        private val portal: org.knightstalker.app.domain.model.Portal,
+        private val categoryId: String?,
+        private val search: String
+    ) : PagingSource<Int, VodItem>() {
+        override suspend fun load(params: LoadParams<Int>): LoadResult<Int, VodItem> {
+            val localKey = params.key ?: 0
+            val remotePage = localKey + 1  // repository pages are 1-based
+            return try {
+                val result = if (mode == ContentMode.Vod) {
+                    vodRepository.getVodList(portal.url, portal.id, categoryId, remotePage, search.ifBlank { null })
+                } else {
+                    vodRepository.getSeriesList(portal.url, portal.id, categoryId, remotePage, search.ifBlank { null })
+                }
+                val (items, total) = result.getOrThrow()
+                val nextKey = if (items.isEmpty() || remotePage * 60 >= total) null else localKey + 1
+                LoadResult.Page(
+                    data = items,
+                    prevKey = if (localKey == 0) null else localKey - 1,
+                    nextKey = nextKey
+                )
+            } catch (e: Exception) {
+                LoadResult.Error(e)
+            }
+        }
+
+        override fun getRefreshKey(state: PagingState<Int, VodItem>): Int? = null
     }
 
     private fun MediaIndexRow.toVodItem() = VodItem(

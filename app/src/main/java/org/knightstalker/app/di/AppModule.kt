@@ -102,7 +102,7 @@ class AppModule(private val context: Context) {
     }
 
     val vodRepository: VodRepository by lazy {
-        VodRepository(stalkerApi, database.favoriteDao())
+        VodRepository(stalkerApi, database.favoriteDao(), authManager, xtreamApi)
     }
 
     val favoriteRepository: FavoriteRepository by lazy {

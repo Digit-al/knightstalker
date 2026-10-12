@@ -3,33 +3,68 @@ package org.knightstalker.app.data.repository
 
 import org.knightstalker.app.data.local.db.FavoriteDao
 import org.knightstalker.app.data.remote.StalkerApi
+import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.dto.VodCategoryData
 import org.knightstalker.app.data.remote.dto.VodData
+import org.knightstalker.app.domain.model.PortalType
 import org.knightstalker.app.domain.model.Season
 import org.knightstalker.app.domain.model.VodCategory
 import org.knightstalker.app.domain.model.VodItem
 
 class VodRepository(
     private val api: StalkerApi,
-    private val favoriteDao: FavoriteDao
+    private val favoriteDao: FavoriteDao,
+    private val authManager: StalkerAuthManager,
+    private val xtreamApi: XtreamCodesApi
 ) {
+
+    private fun portalType(): PortalType = authManager.currentPortal?.type ?: PortalType.STALKER
+
+    private fun xtreamPortal() = authManager.currentPortal
+        ?: throw Exception("No active portal")
+
+    // -------------------------------------------------------------- Categories
+
     suspend fun getCategories(baseUrl: String): Result<List<VodCategory>> {
-        return api.getVodCategories(baseUrl).map { response ->
-            val categories = response.js ?: emptyList()
-            val mapped = categories.map { it.toDomain() }
-            val all = VodCategory(id = "*", title = "All", alias = "all")
-            listOf(all) + mapped.filter { it.title.lowercase() != "all" }
+        return when (portalType()) {
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                try {
+                    val cats = xtreamApi.getCategories(portal.url, portal.username, portal.password, "movie").getOrThrow()
+                    Result.success(xtreamToVodCategories(cats))
+                } catch (e: Exception) { Result.failure(e) }
+            }
+            PortalType.M3U -> Result.success(listOf(VodCategory(id = "*", title = "All", alias = "all")))
+            else -> api.getVodCategories(baseUrl).map { response ->
+                val categories = response.js ?: emptyList()
+                val mapped = categories.map { it.toDomain() }
+                val all = VodCategory(id = "*", title = "All", alias = "all")
+                listOf(all) + mapped.filter { it.title.lowercase() != "all" }
+            }
         }
     }
 
     suspend fun getSeriesCategories(baseUrl: String): Result<List<VodCategory>> {
-        return api.getSeriesCategories(baseUrl).map { response ->
-            val categories = response.js ?: emptyList()
-            val mapped = categories.map { it.toDomain() }
-            val all = VodCategory(id = "*", title = "All", alias = "all")
-            listOf(all) + mapped.filter { it.title.lowercase() != "all" }
+        return when (portalType()) {
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                try {
+                    val cats = xtreamApi.getCategories(portal.url, portal.username, portal.password, "series").getOrThrow()
+                    Result.success(xtreamToVodCategories(cats))
+                } catch (e: Exception) { Result.failure(e) }
+            }
+            PortalType.M3U -> Result.success(listOf(VodCategory(id = "*", title = "All", alias = "all")))
+            else -> api.getSeriesCategories(baseUrl).map { response ->
+                val categories = response.js ?: emptyList()
+                val mapped = categories.map { it.toDomain() }
+                val all = VodCategory(id = "*", title = "All", alias = "all")
+                listOf(all) + mapped.filter { it.title.lowercase() != "all" }
+            }
         }
     }
+
+    // -------------------------------------------------------------- VOD list
 
     suspend fun getVodList(
         baseUrl: String,
@@ -39,13 +74,51 @@ class VodRepository(
         search: String? = null,
         sortBy: String = "added"
     ): Result<Pair<List<VodItem>, Int>> {
-        return api.getVodList(baseUrl, categoryId, page, search, sortBy).map { response ->
-            val data = response.js ?: return@map emptyList<VodItem>() to 0
-            val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
-            val items = data.data.map { it.toDomain(favoriteIds) }
-            items to data.total_items
+        return when (portalType()) {
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                try {
+                    val catId = if (categoryId == null || categoryId == "*") null else categoryId
+                    val result = xtreamApi.getVodStreams(portal.url, portal.username, portal.password, catId)
+                    result.onFailure { return Result.failure(it) }
+                    var items = result.getOrThrow()
+                    // Client-side search
+                    if (!search.isNullOrBlank()) {
+                        items = items.filter { it.name.contains(search, ignoreCase = true) }
+                    }
+                    val total = items.size
+                    val start = (page - 1) * PAGE_SIZE
+                    val pageItems = items.drop(start).take(PAGE_SIZE)
+                    val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
+                    val mapped = pageItems.map { item ->
+                        VodItem(
+                            id = item.stream_id,
+                            name = item.name,
+                            cmd = item.stream_id,
+                            logo = item.image.ifBlank { null },
+                            description = item.plot.ifBlank { null },
+                            year = item.releasedate.ifBlank { item.releaseDate }.ifBlank { null },
+                            genre = null,
+                            rating = item.rating.ifBlank { null },
+                            isFavorite = item.stream_id in favoriteIds
+                        )
+                    }
+                    Result.success(mapped to total)
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            PortalType.M3U -> Result.success(emptyList<VodItem>() to 0)
+            else -> api.getVodList(baseUrl, categoryId, page, search, sortBy).map { response ->
+                val data = response.js ?: return@map emptyList<VodItem>() to 0
+                val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
+                val items = data.data.map { it.toDomain(favoriteIds) }
+                items to data.total_items
+            }
         }
     }
+
+    // -------------------------------------------------------------- Series list
 
     suspend fun getSeriesList(
         baseUrl: String,
@@ -55,52 +128,131 @@ class VodRepository(
         search: String? = null,
         sortBy: String = "added"
     ): Result<Pair<List<VodItem>, Int>> {
-        return api.getSeriesList(baseUrl, categoryId, page, search, sortBy).map { response ->
-            val data = response.js ?: return@map emptyList<VodItem>() to 0
-            val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
-            val items = data.data.map { it.toDomain(favoriteIds) }
-            items to data.total_items
-        }
-    }
-
-    suspend fun createLink(baseUrl: String, cmd: String): Result<String> {
-        return api.createVodLink(baseUrl, cmd).map { response ->
-            val link = response.js?.cmd ?: throw Exception("No stream URL returned")
-            if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
-            else link.trim()
-        }
-    }
-
-    /** Seasons (with their episode-number lists) for a top-level series item. */
-    suspend fun getSeriesSeasons(baseUrl: String, seriesId: String): Result<List<Season>> {
-        return api.getSeriesSeasons(baseUrl, seriesId).map { response ->
-            (response.js?.data ?: emptyList()).map {
-                Season(
-                    id = it.id,
-                    name = it.name,
-                    cmd = it.cmd,
-                    episodes = it.episodes,
-                    poster = it.screenshotUri.ifEmpty { null }
-                )
+        return when (portalType()) {
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                try {
+                    val catId = if (categoryId == null || categoryId == "*") null else categoryId
+                    val result = xtreamApi.getSeriesList(portal.url, portal.username, portal.password, catId)
+                    result.onFailure { return Result.failure(it) }
+                    var items = result.getOrThrow()
+                    if (!search.isNullOrBlank()) {
+                        items = items.filter { it.name.contains(search, ignoreCase = true) }
+                    }
+                    val total = items.size
+                    val start = (page - 1) * PAGE_SIZE
+                    val pageItems = items.drop(start).take(PAGE_SIZE)
+                    val mapped = pageItems.map { item ->
+                        VodItem(
+                            id = item.series_id,
+                            name = item.name,
+                            cmd = item.series_id,
+                            logo = item.image.ifBlank { null },
+                            description = item.plot.ifBlank { null },
+                            year = item.releasedate.ifBlank { item.releaseDate }.ifBlank { null },
+                            genre = item.genre.ifBlank { null },
+                            rating = item.rating.ifBlank { null }
+                        )
+                    }
+                    Result.success(mapped to total)
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            PortalType.M3U -> Result.success(emptyList<VodItem>() to 0)
+            else -> api.getSeriesList(baseUrl, categoryId, page, search, sortBy).map { response ->
+                val data = response.js ?: return@map emptyList<VodItem>() to 0
+                val favoriteIds = favoriteDao.getFavoriteIds(portalId).toSet()
+                val items = data.data.map { it.toDomain(favoriteIds) }
+                items to data.total_items
             }
         }
     }
 
-    /** Mint a play URL for a single episode: the season cmd + episode number. */
+    // -------------------------------------------------------------- Links
+
+    suspend fun createLink(baseUrl: String, cmd: String): Result<String> {
+        return when (portalType()) {
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                Result.success(xtreamApi.buildVodUrl(portal.url, portal.username, portal.password, cmd))
+            }
+            PortalType.M3U -> Result.success(cmd)
+            else -> api.createVodLink(baseUrl, cmd).map { response ->
+                val link = response.js?.cmd ?: throw Exception("No stream URL returned")
+                if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
+                else link.trim()
+            }
+        }
+    }
+
+    suspend fun getSeriesSeasons(baseUrl: String, seriesId: String): Result<List<Season>> {
+        return when (portalType()) {
+            // For Xtream, we don't have the episode list from the server's get_series_info.
+            // Return an empty list — the UI will show "No episodes available" gracefully.
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                try {
+                    val result = xtreamApi.getSeriesInfo(portal.url, portal.username, portal.password, seriesId)
+                    result.onFailure { return Result.failure(it) }
+                    val info = result.getOrThrow()
+                    // The server returns a "seasons" list with metadata but no episodes.
+                    // We return an empty list so the UI shows the series detail without episodes.
+                    Result.success(emptyList())
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            PortalType.M3U -> Result.success(emptyList())
+            else -> api.getSeriesSeasons(baseUrl, seriesId).map { response ->
+                (response.js?.data ?: emptyList()).map {
+                    Season(
+                        id = it.id,
+                        name = it.name,
+                        cmd = it.cmd,
+                        episodes = it.episodes,
+                        poster = it.screenshotUri.ifEmpty { null }
+                    )
+                }
+            }
+        }
+    }
+
     suspend fun createEpisodeLink(baseUrl: String, seasonCmd: String, episode: Int): Result<String> {
-        return api.createLink(baseUrl, seasonCmd, type = "vod", series = episode).map { response ->
-            val link = response.js?.cmd ?: throw Exception("No stream URL returned")
-            if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
-            else link.trim()
+        return when (portalType()) {
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                Result.success(xtreamApi.buildSeriesUrl(portal.url, portal.username, portal.password, seasonCmd))
+            }
+            PortalType.M3U -> Result.success(seasonCmd)
+            else -> api.createLink(baseUrl, seasonCmd, type = "vod", series = episode).map { response ->
+                val link = response.js?.cmd ?: throw Exception("No stream URL returned")
+                if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
+                else link.trim()
+            }
         }
     }
 
     suspend fun createSeriesLink(baseUrl: String, cmd: String): Result<String> {
-        return api.createSeriesLink(baseUrl, cmd).map { response ->
-            val link = response.js?.cmd ?: throw Exception("No stream URL returned")
-            if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
-            else link.trim()
+        return when (portalType()) {
+            PortalType.XTREAM -> {
+                val portal = xtreamPortal()
+                Result.success(xtreamApi.buildSeriesUrl(portal.url, portal.username, portal.password, cmd))
+            }
+            PortalType.M3U -> Result.success(cmd)
+            else -> api.createSeriesLink(baseUrl, cmd).map { response ->
+                val link = response.js?.cmd ?: throw Exception("No stream URL returned")
+                if (link.startsWith("ffmpeg ")) link.substringAfter("ffmpeg ").trim()
+                else link.trim()
+            }
         }
+    }
+
+    // -------------------------------------------------------------- Mappers
+
+    private fun xtreamToVodCategories(cats: List<XtreamCodesApi.CategoryInfo>): List<VodCategory> {
+        val mapped = cats.map { VodCategory(id = it.category_id, title = it.category_name, alias = it.category_name) }
+        return listOf(VodCategory(id = "*", title = "All", alias = "all")) + mapped
     }
 
     private fun VodCategoryData.toDomain() = VodCategory(
@@ -123,4 +275,8 @@ class VodRepository(
         actors = actors.ifEmpty { null },
         isFavorite = id in favoriteIds
     )
+
+    companion object {
+        private const val PAGE_SIZE = 60
+    }
 }
