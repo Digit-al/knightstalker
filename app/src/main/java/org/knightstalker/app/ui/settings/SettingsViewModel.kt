@@ -41,7 +41,8 @@ data class SettingsState(
     val seriesCount: Int = 0,
     val movieStatus: String = "IDLE",
     val seriesStatus: String = "IDLE",
-    val lastSyncAt: Long = 0L
+    val lastSyncAt: Long = 0L,
+    val xtreamRefreshHours: Int = UserPreferences.DEFAULT_XTREAM_REFRESH_HOURS
 )
 
 class SettingsViewModel(
@@ -109,6 +110,11 @@ class SettingsViewModel(
                 _state.update { it.copy(autoUpdateOnOpen = v) }
             }
         }
+        viewModelScope.launch {
+            preferences.xtreamRefreshIntervalHours.collect { h ->
+                _state.update { it.copy(xtreamRefreshHours = h) }
+            }
+        }
         // Item counts follow the active portal (re-subscribe when it changes).
         viewModelScope.launch {
             authManager.connectionState.flatMapLatest {
@@ -147,6 +153,10 @@ class SettingsViewModel(
 
     fun setAutoUpdateOnOpen(enabled: Boolean) {
         viewModelScope.launch { preferences.setAutoUpdateOnOpen(enabled) }
+    }
+
+    fun setXtreamRefreshHours(hours: Int) {
+        viewModelScope.launch { preferences.setXtreamRefreshIntervalHours(hours) }
     }
 
     fun rebuildLibrary() {

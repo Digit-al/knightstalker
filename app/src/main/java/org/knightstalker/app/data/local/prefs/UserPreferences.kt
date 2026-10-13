@@ -19,7 +19,10 @@ class UserPreferences(private val context: Context) {
         val FAVORITE_CATEGORIES = stringSetPreferencesKey("favorite_categories")
         val DEFAULT_CATEGORY = stringPreferencesKey("default_category")
         val AUTO_UPDATE_ON_OPEN = booleanPreferencesKey("auto_update_on_open")
+        val XTREAM_REFRESH_INTERVAL_HOURS = intPreferencesKey("xtream_refresh_interval_hours")
         const val DEFAULT_CATEGORY_FALLBACK = "|FR| BOX OFFICE"
+        /** Default Xtream catalogue refresh: 24 h. */
+        const val DEFAULT_XTREAM_REFRESH_HOURS = 24
     }
 
     val lastPortalId: Flow<Long?> = context.dataStore.data.map { it[LAST_PORTAL_ID] }
@@ -28,6 +31,13 @@ class UserPreferences(private val context: Context) {
     val favoriteCategories: Flow<Set<String>> = context.dataStore.data.map { it[FAVORITE_CATEGORIES] ?: emptySet() }
     val defaultCategory: Flow<String> = context.dataStore.data.map { it[DEFAULT_CATEGORY] ?: DEFAULT_CATEGORY_FALLBACK }
     val autoUpdateOnOpen: Flow<Boolean> = context.dataStore.data.map { it[AUTO_UPDATE_ON_OPEN] ?: true }
+    val xtreamRefreshIntervalHours: Flow<Int> = context.dataStore.data.map {
+        it[XTREAM_REFRESH_INTERVAL_HOURS] ?: DEFAULT_XTREAM_REFRESH_HOURS
+    }
+    /** Milliseconds between automatic Xtream catalogue refreshes (user-configurable). */
+    val xtreamRefreshIntervalMs: Flow<Long> = context.dataStore.data.map {
+        (it[XTREAM_REFRESH_INTERVAL_HOURS] ?: DEFAULT_XTREAM_REFRESH_HOURS).toLong() * 3600_000L
+    }
 
     suspend fun setLastPortalId(id: Long) {
         context.dataStore.edit { it[LAST_PORTAL_ID] = id }
@@ -47,6 +57,10 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setAutoUpdateOnOpen(enabled: Boolean) {
         context.dataStore.edit { it[AUTO_UPDATE_ON_OPEN] = enabled }
+    }
+
+    suspend fun setXtreamRefreshIntervalHours(hours: Int) {
+        context.dataStore.edit { it[XTREAM_REFRESH_INTERVAL_HOURS] = hours.coerceIn(1, 168) }
     }
 
     suspend fun toggleFavoriteCategory(categoryId: String) {

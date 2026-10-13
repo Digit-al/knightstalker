@@ -130,12 +130,33 @@ fun VodScreen(
                 when {
                     pagingItems.itemCount == 0 && refresh is LoadState.Loading -> LoadingIndicator()
                     pagingItems.itemCount == 0 -> {
+                        // While the local index is being built (Xtream full crawl in a
+                        // WorkManager worker), Room is legitimately empty — show a
+                        // "building" state instead of "No content found".
+                        val building = state.syncStatus == "CRAWLING" || state.syncStatus == "DELTA"
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                "No content found",
-                                color = TextSecondary,
-                                style = MaterialTheme.typography.bodyLarge
-                            )
+                            if (building) {
+                                androidx.compose.foundation.layout.Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        "Building local catalogue…",
+                                        color = TextSecondary,
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Text(
+                                        "Content appears as soon as indexing finishes.",
+                                        color = TextSecondary,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    "No content found",
+                                    color = TextSecondary,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
                         }
                     }
                     else -> {

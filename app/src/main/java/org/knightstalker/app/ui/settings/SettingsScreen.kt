@@ -509,6 +509,66 @@ fun SettingsScreen(
                     )
                 }
 
+                // --- Xtream catalogue refresh frequency ---
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Catalogue refresh", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "How often the local library is re-synced in the background",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                val refreshOptions = listOf(
+                    1 to "1 hour",
+                    6 to "6 hours",
+                    12 to "12 hours",
+                    24 to "24 hours",
+                    48 to "48 hours",
+                    168 to "7 days"
+                )
+                val selectedHours = state.xtreamRefreshHours
+                var refreshMenu by remember { mutableStateOf(false) }
+                Box {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(DarkSurfaceVariant)
+                            .clickable { refreshMenu = true }
+                            .padding(horizontal = 12.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            refreshOptions.firstOrNull { it.first == selectedHours }?.second
+                                ?: "${selectedHours} hours",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = TextSecondary)
+                    }
+                    DropdownMenu(
+                        expanded = refreshMenu,
+                        onDismissRequest = { refreshMenu = false }
+                    ) {
+                        refreshOptions.forEach { (hours, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    refreshMenu = false
+                                    viewModel.setXtreamRefreshHours(hours)
+                                },
+                                leadingIcon = {
+                                    if (hours == selectedHours) {
+                                        Icon(Icons.Default.Check, contentDescription = null, tint = Accent)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = { viewModel.rebuildLibrary() },

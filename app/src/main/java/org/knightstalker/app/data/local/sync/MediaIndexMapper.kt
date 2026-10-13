@@ -3,6 +3,7 @@ package org.knightstalker.app.data.local.sync
 
 import org.knightstalker.app.data.local.entity.MovieIndexEntity
 import org.knightstalker.app.data.local.entity.SeriesIndexEntity
+import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.dto.VodCategoryData
 import org.knightstalker.app.data.remote.dto.VodData
 import java.text.Normalizer
@@ -115,6 +116,74 @@ object MediaIndexMapper {
         director = director,
         syncEpoch = syncEpoch
     )
+
+    /**
+     * Xtream `rating` is a 0-10 string ("7.5", "8", "N/A", ""). The 5-based variant
+     * (`rating_5based`) is intentionally ignored — `rating` is already on the 0-10 scale.
+     */
+    fun parseXtreamRating(rating: String): Double? {
+        val trimmed = rating.trim()
+        if (trimmed.isEmpty() || trimmed.equals("N/A", ignoreCase = true)) return null
+        val value = trimmed.replace(',', '.').toDoubleOrNull() ?: return null
+        if (value <= 0.0) return null
+        return value.coerceIn(0.0, 10.0)
+    }
+
+    /** Map a Xtream on-demand stream to a movie index row. */
+    fun XtreamCodesApi.VodItem.toXtreamMovieEntity(
+        portalId: Long,
+        syncEpoch: Long,
+        adultCategoryIds: Set<String>
+    ): MovieIndexEntity {
+        val categoryId = category_id.ifBlank { category_ids?.firstOrNull().orEmpty() }
+        return MovieIndexEntity(
+            portalId = portalId,
+            itemId = stream_id,
+            name = name,
+            sortName = normalizeSortName(name),
+            cmd = stream_id,
+            categoryId = categoryId,
+            rating = parseXtreamRating(rating),
+            year = parseYear(releasedate.ifBlank { releaseDate }),
+            addedAt = 0L, // Xtream exposes no "added" timestamp
+            genresCsv = "",
+            durationMin = null,
+            posterUrl = image,
+            isAdult = computeIsAdult(categoryId, name, 0, adultCategoryIds),
+            tmdbId = null,
+            actors = cast,
+            director = "",
+            syncEpoch = syncEpoch
+        )
+    }
+
+    /** Map a Xtream series to a series index row. */
+    fun XtreamCodesApi.SeriesItem.toXtreamSeriesEntity(
+        portalId: Long,
+        syncEpoch: Long,
+        adultCategoryIds: Set<String>
+    ): SeriesIndexEntity {
+        val categoryId = category_id.ifBlank { "" }
+        return SeriesIndexEntity(
+            portalId = portalId,
+            itemId = series_id,
+            name = name,
+            sortName = normalizeSortName(name),
+            cmd = series_id,
+            categoryId = categoryId,
+            rating = parseXtreamRating(rating),
+            year = parseYear(releasedate.ifBlank { releaseDate }),
+            addedAt = 0L,
+            genresCsv = genre,
+            durationMin = null,
+            posterUrl = image,
+            isAdult = computeIsAdult(categoryId, name, 0, adultCategoryIds),
+            tmdbId = null,
+            actors = cast,
+            director = director,
+            syncEpoch = syncEpoch
+        )
+    }
 
     fun VodData.toSeriesEntity(
         portalId: Long,

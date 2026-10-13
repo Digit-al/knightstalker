@@ -3,10 +3,13 @@ package org.knightstalker.app.data.local.sync
 
 import android.content.Context
 import android.util.Log
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,9 +29,15 @@ import org.knightstalker.app.data.local.db.SyncStateDao
 import org.knightstalker.app.data.local.entity.SyncStateEntity
 import org.knightstalker.app.data.local.prefs.UserPreferences
 import org.knightstalker.app.data.remote.StalkerApi
+import org.knightstalker.app.data.local.sync.MediaIndexMapper.toXtreamMovieEntity
+import org.knightstalker.app.data.local.sync.MediaIndexMapper.toXtreamSeriesEntity
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.dto.VodData
 import org.knightstalker.app.data.remote.dto.VodListData
+import org.knightstalker.app.data.repository.PortalRepository
+import org.knightstalker.app.domain.model.Portal
+import org.knightstalker.app.domain.model.PortalType
 
 /**
  * Owns all list-network traffic. Crawls each [MediaKind] into the local Room index and keeps
@@ -39,12 +48,19 @@ class SyncEngine(
     private val context: Context,
     private val api: StalkerApi,
     private val authManager: StalkerAuthManager,
+    private val xtreamApi: XtreamCodesApi,
     private val movieDao: MovieIndexDao,
     private val seriesDao: SeriesIndexDao,
     private val syncStateDao: SyncStateDao,
-    private val preferences: UserPreferences
+    private val preferences: UserPreferences,
+    private val portalRepository: PortalRepository
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    companion object {
+        /** Unique work name for the periodic Xtream background refresh. */
+        const val XTREAM_PERIODIC_WORK_NAME = "sync-xtream-periodic"
+    }
 
     /** Serialises mid-crawl re-handshakes so a token expiry triggers at most one in flight. */
     private val authMutex = Mutex()
@@ -52,26 +68,86 @@ class SyncEngine(
     /** UI-facing status stream (status + indexed/total). */
     fun status(kind: MediaKind): Flow<SyncStateEntity?> = syncStateDao.observe(kind.key)
 
+    /**
+     * Resolve the active portal, falling back to the persisted "last portal" when the
+     * in-memory [StalkerAuthManager.currentPortal] is null. This matters for the
+     * WorkManager workers, which may run in a fresh process where no UI has yet
+     * re-established the live connection.
+     */
+    private suspend fun resolvePortal(): Portal? {
+        authManager.currentPortal?.let { return it }
+        val lastId = preferences.lastPortalId.first() ?: return null
+        return portalRepository.getById(lastId)
+    }
+
     // ---------------------------------------------------------------------------------------
     // State machine
     // ---------------------------------------------------------------------------------------
 
     /** Decide + dispatch per the §7 state machine. Safe to call on every tab open. */
     suspend fun ensureFresh(kind: MediaKind) {
-        authManager.currentPortal ?: return // no active portal -> degrade gracefully
+        val portal = authManager.currentPortal ?: return // no active portal -> degrade gracefully
         if (!preferences.autoUpdateOnOpen.first()) return // auto-update disabled -> only manual rebuild
+        when (portal.type) {
+            PortalType.XTREAM -> ensureFreshXtream(kind, portal)
+            PortalType.M3U -> { /* M3U has no crawlable local index */ }
+            else -> ensureFreshStalker(kind)
+        }
+    }
+
+    /**
+     * STALKER: first-run full crawl (WorkManager), then front-of-catalogue deltas that are
+     * throttled so reopening the tab is cheap. A full reconcile (prune removed items,
+     * refresh metadata) is on-demand via Settings -> "Rebuild library now".
+     */
+    private suspend fun ensureFreshStalker(kind: MediaKind) {
         val st = syncStateDao.get(kind.key)
         val now = System.currentTimeMillis()
         when {
-            // First run only: build the index once. After that, opening the app never
-            // triggers a heavy full crawl — it just deltas in newly-added content (which
-            // stops as soon as it reaches items we already have). A full reconcile (prune
-            // removed items, refresh old metadata) is on-demand via Settings ->
-            // "Rebuild library now".
             st == null || st.lastFullSyncAt == 0L -> enqueueFullCrawlWork(kind)
             now - st.lastDeltaSyncAt < SyncConstants.DELTA_THROTTLE_MS -> return
             else -> scope.launch { runCatching { deltaSync(kind) } }
         }
+    }
+
+    /**
+     * XTREAM: the whole catalogue arrives in a single API call, so there is no incremental
+     * delta — a refresh is always a full re-fetch. The first crawl for a portal is
+     * offloaded to a WorkManager worker (potentially 200k+ rows); afterwards we honour the
+     * user's refresh interval — if the local index is still fresh we do nothing, otherwise
+     * we re-crawl in the background. This is what keeps the grid served from Room and
+     * avoids re-downloading / re-parsing the full list on every scroll.
+     */
+    private suspend fun ensureFreshXtream(kind: MediaKind, portal: Portal) {
+        // Keep the background refresh schedule aligned with the user's chosen interval.
+        val intervalHours = preferences.xtreamRefreshIntervalHours.first()
+        scheduleXtreamPeriodicSync(intervalHours)
+
+        val st = syncStateDao.get(kind.key)
+        val hasRows = count(kind, portal.id) > 0
+        if (!hasRows || st == null) {
+            enqueueFullCrawlWork(kind)
+        } else {
+            val intervalMs = preferences.xtreamRefreshIntervalMs.first()
+            val last = st.lastFullSyncAt
+            if (last > 0L && System.currentTimeMillis() - last < intervalMs) return // still fresh
+            scope.launch { runCatching { fullCrawl(kind) } }
+        }
+    }
+
+    /**
+     * Enqueue (or update) the periodic Xtream refresh so the Room index stays fresh in the
+     * background even when Movies / Series is not open. The interval is coerced to a value
+     * WorkManager accepts (>= 1 h, whole hours). Uses a unique work name with UPDATE so
+     * repeated calls only reschedule rather than stack work.
+     */
+    fun scheduleXtreamPeriodicSync(intervalHours: Int) {
+        val hours = (intervalHours.toLong()).coerceAtLeast(1L)
+        val req = PeriodicWorkRequestBuilder<XtreamPeriodicSyncWorker>(hours, TimeUnit.HOURS)
+            .build()
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            XTREAM_PERIODIC_WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, req
+        )
     }
 
     private fun enqueueFullCrawlWork(
@@ -95,6 +171,15 @@ class SyncEngine(
     fun rebuildLibrary() {
         enqueueFullCrawlWork(MediaKind.MOVIE, ExistingWorkPolicy.REPLACE)
         enqueueFullCrawlWork(MediaKind.SERIES, ExistingWorkPolicy.REPLACE)
+        // If the active portal is Xtream, keep the background refresh aligned with the
+        // user's interval so the freshly-rebuilt index stays fresh afterwards.
+        scope.launch {
+            val portal = resolvePortal() ?: return@launch
+            if (portal.type == PortalType.XTREAM) {
+                val hours = preferences.xtreamRefreshIntervalHours.first()
+                scheduleXtreamPeriodicSync(hours)
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -103,6 +188,15 @@ class SyncEngine(
 
     /** Heavy resumable crawl. Called from the WorkManager worker. */
     suspend fun fullCrawl(kind: MediaKind) {
+        // Xtream only needs the persisted username/password, so it can resolve its portal
+        // from the database even in a fresh worker process (no live connection required).
+        val xtream = resolvePortal()?.takeIf { it.type == PortalType.XTREAM }
+        if (xtream != null) {
+            fullCrawlXtream(kind, xtream, xtream.id)
+            return
+        }
+
+        // Stalker / M3U need the live connection + in-memory token, so require it.
         val portal = authManager.currentPortal ?: return
         val portalId = portal.id
 
@@ -189,6 +283,78 @@ class SyncEngine(
     }
 
     // ---------------------------------------------------------------------------------------
+    // Xtream full crawl (single-shot fetch -> chunk -> Room)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * Xtream has no paging and no delta: the whole catalogue arrives in one response.
+     * We fetch it once, map every row, and upsert in batches while reporting progress.
+     * The fetched list is transient (dropped as soon as the crawl finishes); the durable
+     * copy lives in Room, which is what the grid pages through — this is what removes the
+     * repeated full-list parse that used to OOM on every scroll page.
+     */
+    private suspend fun fullCrawlXtream(kind: MediaKind, portal: Portal, portalId: Long) {
+        val existing = syncStateDao.get(kind.key)
+        val stamp = System.currentTimeMillis()
+        var state = (existing ?: SyncStateEntity(kind = kind.key, status = "IDLE")).copy(
+            status = "CRAWLING",
+            totalItemsRemote = 0,
+            itemsIndexed = 0,
+            crawlCursorPage = 0,
+            syncEpoch = stamp,
+            lastError = null
+        )
+        syncStateDao.upsert(state)
+
+        val adultIds = resolveXtreamAdultCategoryIds(portal)
+        try {
+            if (kind == MediaKind.MOVIE) {
+                val all = xtreamApi.getVodStreams(portal.url, portal.username, portal.password).getOrThrow()
+                state = state.copy(totalItemsRemote = all.size, itemsIndexed = 0)
+                syncStateDao.upsert(state)
+                var indexed = 0
+                all.chunked(SyncConstants.UPSERT_BATCH).forEach { chunk ->
+                    movieDao.upsert(chunk.map { it.toXtreamMovieEntity(portalId, stamp, adultIds) })
+                    indexed += chunk.size
+                    state = state.copy(itemsIndexed = indexed)
+                    syncStateDao.upsert(state)
+                }
+            } else {
+                val all = xtreamApi.getSeriesList(portal.url, portal.username, portal.password).getOrThrow()
+                state = state.copy(totalItemsRemote = all.size, itemsIndexed = 0)
+                syncStateDao.upsert(state)
+                var indexed = 0
+                all.chunked(SyncConstants.UPSERT_BATCH).forEach { chunk ->
+                    seriesDao.upsert(chunk.map { it.toXtreamSeriesEntity(portalId, stamp, adultIds) })
+                    indexed += chunk.size
+                    state = state.copy(itemsIndexed = indexed)
+                    syncStateDao.upsert(state)
+                }
+            }
+
+            // Tombstone sweep: anything not seen in this crawl was removed upstream.
+            prune(kind, portalId, stamp)
+
+            val finalCount = count(kind, portalId)
+            syncStateDao.upsert(
+                state.copy(
+                    status = "IDLE",
+                    totalItemsRemote = finalCount,
+                    itemsIndexed = finalCount,
+                    crawlCursorPage = 0,
+                    lastFullSyncAt = System.currentTimeMillis(),
+                    lastError = null
+                )
+            )
+            Log.d("SyncEngine", "fullCrawlXtream(${kind.key}) done: $finalCount rows")
+        } catch (e: Exception) {
+            syncStateDao.upsert(state.copy(status = "ERROR", lastError = e.message))
+            Log.e("SyncEngine", "fullCrawlXtream(${kind.key}) failed", e)
+            throw e
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
     // Delta sync (front-of-catalogue incremental)
     // ---------------------------------------------------------------------------------------
 
@@ -196,6 +362,7 @@ class SyncEngine(
     suspend fun deltaSync(kind: MediaKind) {
         val portal = authManager.currentPortal ?: return
         val portalId = portal.id
+        if (portal.type == PortalType.XTREAM) return // Xtream has no delta; fullCrawlXtream handles it
 
         val existing = syncStateDao.get(kind.key)
         val stamp = System.currentTimeMillis()
@@ -234,6 +401,21 @@ class SyncEngine(
             syncStateDao.upsert(state.copy(status = "ERROR", lastError = e.message))
             Log.e("SyncEngine", "deltaSync(${kind.key}) failed", e)
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Xtream helpers
+    // ---------------------------------------------------------------------------------------
+
+    /** Adult-category ids for an Xtream portal (category name contains ADULT/XXX). */
+    private suspend fun resolveXtreamAdultCategoryIds(portal: Portal): Set<String> {
+        val cats = xtreamApi.getCategories(portal.url, portal.username, portal.password, "movie").getOrNull()
+            ?: xtreamApi.getCategories(portal.url, portal.username, portal.password, "series").getOrNull()
+            ?: emptyList()
+        return cats.mapNotNull { c ->
+            val t = c.category_name.uppercase()
+            if (t.contains("ADULT") || t.contains("XXX")) c.category_id else null
+        }.toSet()
     }
 
     // ---------------------------------------------------------------------------------------

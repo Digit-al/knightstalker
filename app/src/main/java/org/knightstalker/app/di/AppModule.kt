@@ -78,7 +78,7 @@ class AppModule(private val context: Context) {
     }
 
     val syncEngine: SyncEngine by lazy {
-        SyncEngine(context, stalkerApi, authManager, movieIndexDao, seriesIndexDao, syncStateDao, userPreferences)
+        SyncEngine(context, stalkerApi, authManager, xtreamApi, movieIndexDao, seriesIndexDao, syncStateDao, userPreferences, portalRepository)
     }
 
     val userPreferences: UserPreferences by lazy {

@@ -163,9 +163,13 @@ class VodViewModel(
         val q = _state.value.searchQuery.trim()
         val categoryId = if (cat == "*") null else cat
 
-        // For XTREAM / M3U portals there is no local crawl index — page directly
-        // from the remote API so the grid works the moment the portal connects.
-        if (portal.type != org.knightstalker.app.domain.model.PortalType.STALKER) {
+        // M3U has no crawlable catalogue — page directly from the remote API so the grid
+        // works the moment the portal connects. STALKER and XTREAM both serve the grid
+        // from the local Room index: for XTREAM the index is built once by
+        // SyncEngine.fullCrawlXtream, so scrolling never re-downloads / re-parses the
+        // whole (hundreds-of-thousands-of-rows) list — that repeated full parse is what
+        // used to OOM the process a few seconds after the catalogue first appeared.
+        if (portal.type == org.knightstalker.app.domain.model.PortalType.M3U) {
             val remoteSource: PagingSource<Int, VodItem> = RemoteVodPagingSource(portal, categoryId, q)
             val remoteFlow = Pager(PagingConfig(pageSize = 60, enablePlaceholders = false)) { remoteSource }
                 .flow
