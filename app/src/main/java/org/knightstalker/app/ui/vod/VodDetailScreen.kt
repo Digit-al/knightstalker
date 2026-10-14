@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,7 +31,9 @@ fun VodDetailScreen(
     onPlay: () -> Unit,
     onDownload: () -> Unit = {},
     onToggleFavorite: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** True while the TMDB details (synopsis / cast / genres) are being fetched. */
+    loading: Boolean = false
 ) {
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { playFocus.requestFocus() }
@@ -107,6 +110,20 @@ fun VodDetailScreen(
                 vod.genre?.let {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(it, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                }
+
+                // While the TMDB details are being fetched, show a hint in the
+                // description area so the user knows more info is on its way.
+                if (loading && vod.description == null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Loading details…", style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))

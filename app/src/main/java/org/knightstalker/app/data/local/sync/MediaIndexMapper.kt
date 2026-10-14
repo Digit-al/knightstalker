@@ -6,6 +6,7 @@ import org.knightstalker.app.data.local.entity.SeriesIndexEntity
 import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.dto.VodCategoryData
 import org.knightstalker.app.data.remote.dto.VodData
+import org.knightstalker.app.data.remote.parser.M3uChannel
 import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -56,6 +57,29 @@ object MediaIndexMapper {
         } catch (e: Exception) {
             0L
         }
+    }
+
+    /**
+     * Xtream `added` is a raw Unix epoch (seconds). Convert to epoch millis, 0 on bad input.
+     */
+    fun parseXtreamAdded(added: String): Long {
+        val trimmed = added.trim()
+        if (trimmed.isEmpty()) return 0L
+        val secs = trimmed.toLongOrNull() ?: return 0L
+        if (secs <= 0L) return 0L
+        // A bare value below ~1e11 is a Unix epoch in seconds -> convert to millis;
+        // anything larger is already epoch millis. Covers 1973..~5138 either way.
+        return if (secs < 100_000_000_000L) secs * 1000L else secs
+    }
+
+    /**
+     * Leading 4-digit year from a bare title when the portal sends no release date.
+     * e.g. "Water For Elephants (2011)" or "The Matrix 1999" -> 2011 / 1999.
+     */
+    private fun yearFromName(name: String): Int? {
+        val m = Regex("\\((\\d{4})\\)").find(name) ?: return null
+        val y = m.groupValues[1].toIntOrNull() ?: return null
+        return if (y in 1900..2100) y else null
     }
 
     /** `time` (minutes string) -> Int, else null. */
@@ -114,7 +138,8 @@ object MediaIndexMapper {
         tmdbId = tmdbId.ifEmpty { null },
         actors = actors,
         director = director,
-        syncEpoch = syncEpoch
+        syncEpoch = syncEpoch,
+        ext = ""
     )
 
     /**
@@ -144,16 +169,17 @@ object MediaIndexMapper {
             cmd = stream_id,
             categoryId = categoryId,
             rating = parseXtreamRating(rating),
-            year = parseYear(releasedate.ifBlank { releaseDate }),
-            addedAt = 0L, // Xtream exposes no "added" timestamp
+            year = parseYear(releasedate.ifBlank { releaseDate }) ?: yearFromName(name),
+            addedAt = parseXtreamAdded(added),
             genresCsv = "",
             durationMin = null,
             posterUrl = image,
             isAdult = computeIsAdult(categoryId, name, 0, adultCategoryIds),
-            tmdbId = null,
+            tmdbId = tmdb.ifBlank { null },
             actors = cast,
             director = "",
-            syncEpoch = syncEpoch
+            syncEpoch = syncEpoch,
+            ext = container_extension.ifBlank { "mp4" }
         )
     }
 
@@ -181,9 +207,39 @@ object MediaIndexMapper {
             tmdbId = null,
             actors = cast,
             director = director,
-            syncEpoch = syncEpoch
+            syncEpoch = syncEpoch,
+            // Xtream series have no single container extension — it is per-episode.
+            ext = ""
         )
     }
+
+    /**
+     * An M3U playlist has no series concept — every entry (live, VOD, movie) is a
+     * stream URL. For the Movies grid we index the whole playlist as "movies".
+     * The crawl timestamp doubles as `addedAt` so "Date added" sort is stable and
+     * meaningful (all rows land with the crawl time; without it every row would
+     * tie at 0 and fall back to name order).
+     */
+    fun M3uChannel.toM3uMovieEntity(portalId: Long, syncEpoch: Long): MovieIndexEntity = MovieIndexEntity(
+        portalId = portalId,
+        itemId = id,
+        name = name,
+        sortName = normalizeSortName(name),
+        cmd = url,
+        categoryId = groupTitle ?: "General",
+        rating = null,
+        year = null,
+        addedAt = syncEpoch,
+        genresCsv = "",
+        durationMin = null,
+        posterUrl = logo.orEmpty(),
+        isAdult = false,
+        tmdbId = tvgId,
+        actors = "",
+        director = "",
+        syncEpoch = syncEpoch,
+        ext = ""
+    )
 
     fun VodData.toSeriesEntity(
         portalId: Long,
@@ -206,6 +262,7 @@ object MediaIndexMapper {
         tmdbId = tmdbId.ifEmpty { null },
         actors = actors,
         director = director,
-        syncEpoch = syncEpoch
+        syncEpoch = syncEpoch,
+        ext = ""
     )
 }

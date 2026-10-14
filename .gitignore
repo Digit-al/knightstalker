@@ -15,3 +15,4 @@ local.properties
 *.keystore
 /gradle/wrapper/gradle-wrapper.jar
 .claude/
+keystore.properties

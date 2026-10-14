@@ -35,6 +35,7 @@ import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.dto.VodData
 import org.knightstalker.app.data.remote.dto.VodListData
+import org.knightstalker.app.data.local.sync.MediaIndexMapper.toM3uMovieEntity
 import org.knightstalker.app.data.repository.PortalRepository
 import org.knightstalker.app.domain.model.Portal
 import org.knightstalker.app.domain.model.PortalType
@@ -60,6 +61,13 @@ class SyncEngine(
     companion object {
         /** Unique work name for the periodic Xtream background refresh. */
         const val XTREAM_PERIODIC_WORK_NAME = "sync-xtream-periodic"
+
+        /**
+         * Bump when the crawl starts storing new fields so existing installs run one
+         * full re-crawl to populate them (2: Xtream rows now carry TMDB id, year and
+         * the stream poster). A stored value below this forces a re-crawl.
+         */
+        const val CRAWL_FORMAT_VERSION = 2
     }
 
     /** Serialises mid-crawl re-handshakes so a token expiry triggers at most one in flight. */
@@ -90,7 +98,7 @@ class SyncEngine(
         if (!preferences.autoUpdateOnOpen.first()) return // auto-update disabled -> only manual rebuild
         when (portal.type) {
             PortalType.XTREAM -> ensureFreshXtream(kind, portal)
-            PortalType.M3U -> { /* M3U has no crawlable local index */ }
+            PortalType.M3U -> ensureFreshM3u(kind, portal)
             else -> ensureFreshStalker(kind)
         }
     }
@@ -128,6 +136,13 @@ class SyncEngine(
         if (!hasRows || st == null) {
             enqueueFullCrawlWork(kind)
         } else {
+            // A new crawl-format version (new mapped fields) always forces one full
+            // re-crawl, regardless of the elapsed interval — otherwise rows written
+            // by an older app version would keep their empty fields forever.
+            if (st.crawlFormatVersion < CRAWL_FORMAT_VERSION) {
+                scope.launch { runCatching { fullCrawl(kind) } }
+                return
+            }
             val intervalMs = preferences.xtreamRefreshIntervalMs.first()
             val last = st.lastFullSyncAt
             if (last > 0L && System.currentTimeMillis() - last < intervalMs) return // still fresh
@@ -169,13 +184,23 @@ class SyncEngine(
      * in-flight crawl so a fresh full crawl runs regardless of the throttle / auto-update flag.
      */
     fun rebuildLibrary() {
+        val portal = authManager.currentPortal
+        if (portal != null && portal.type == PortalType.M3U) {
+            // M3U needs the live in-memory playlist, so run inline (not via WorkManager
+            // which would lack the connection in a fresh process).
+            val channels = authManager.m3uChannels
+            if (channels.isNotEmpty()) {
+                scope.launch { runCatching { fullCrawlM3u(MediaKind.MOVIE, portal.id, channels) } }
+            }
+            return
+        }
         enqueueFullCrawlWork(MediaKind.MOVIE, ExistingWorkPolicy.REPLACE)
         enqueueFullCrawlWork(MediaKind.SERIES, ExistingWorkPolicy.REPLACE)
         // If the active portal is Xtream, keep the background refresh aligned with the
         // user's interval so the freshly-rebuilt index stays fresh afterwards.
         scope.launch {
-            val portal = resolvePortal() ?: return@launch
-            if (portal.type == PortalType.XTREAM) {
+            val p = resolvePortal() ?: return@launch
+            if (p.type == PortalType.XTREAM) {
                 val hours = preferences.xtreamRefreshIntervalHours.first()
                 scheduleXtreamPeriodicSync(hours)
             }
@@ -196,7 +221,17 @@ class SyncEngine(
             return
         }
 
-        // Stalker / M3U need the live connection + in-memory token, so require it.
+        // M3U: the playlist is in memory, no network paging needed. The live
+        // connection is required, so this branch is only reached from the UI path
+        // (ensureFresh / rebuildLibrary), never from a bare worker process.
+        val live = authManager.currentPortal
+        if (live != null && live.type == PortalType.M3U) {
+            val channels = authManager.m3uChannels
+            if (channels.isNotEmpty()) fullCrawlM3u(kind, live.id, channels) else return
+            return
+        }
+
+        // Stalker needs the live connection + in-memory token, so require it.
         val portal = authManager.currentPortal ?: return
         val portalId = portal.id
 
@@ -343,6 +378,7 @@ class SyncEngine(
                     itemsIndexed = finalCount,
                     crawlCursorPage = 0,
                     lastFullSyncAt = System.currentTimeMillis(),
+                    crawlFormatVersion = CRAWL_FORMAT_VERSION,
                     lastError = null
                 )
             )
@@ -350,6 +386,84 @@ class SyncEngine(
         } catch (e: Exception) {
             syncStateDao.upsert(state.copy(status = "ERROR", lastError = e.message))
             Log.e("SyncEngine", "fullCrawlXtream(${kind.key}) failed", e)
+            throw e
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // M3U full crawl (in-memory playlist -> Room)
+    // ---------------------------------------------------------------------------------------
+
+    /**
+     * M3U: the playlist is already parsed in memory at connect time (`m3uChannels`).
+     * There is no incremental delta — a refresh is a full re-map + upsert. Because the
+     * crawl is purely local (no network during the crawl itself), it runs inline in the
+     * engine scope rather than a WorkManager worker (which would lack the live connection
+     * and therefore the in-memory playlist).
+     */
+    private suspend fun ensureFreshM3u(kind: MediaKind, portal: Portal) {
+        if (kind == MediaKind.SERIES) return // M3U has no series concept; entries land in the Movies index
+        val channels = authManager.m3uChannels
+        if (channels.isEmpty()) return // playlist not loaded yet
+
+        val st = syncStateDao.get(kind.key)
+        val hasRows = count(kind, portal.id) > 0
+        if (hasRows && st != null && st.lastFullSyncAt > 0L) {
+            // Reuse the Xtream refresh interval as a reasonable "re-crawl if stale" threshold.
+            val intervalMs = preferences.xtreamRefreshIntervalMs.first()
+            if (System.currentTimeMillis() - st.lastFullSyncAt < intervalMs) return // still fresh
+        }
+        scope.launch { runCatching { fullCrawlM3u(kind, portal.id, channels) } }
+    }
+
+    /**
+     * Map the in-memory M3U playlist into the Room index. Every entry (live or VOD)
+     * is indexed as a "movie": M3U has no series concept (no seasons/episodes), and
+     * entries in the Series tab would be dead ends (nothing to load on click).
+     * The crawl itself is purely local — the playlist is already parsed in memory —
+     * so it is the lightest of the three crawl flavours (no network at all).
+     */
+    private suspend fun fullCrawlM3u(kind: MediaKind, portalId: Long, channels: List<org.knightstalker.app.data.remote.parser.M3uChannel>) {
+        if (kind == MediaKind.SERIES) return
+        val stamp = System.currentTimeMillis()
+        val existing = syncStateDao.get(kind.key)
+        var state = (existing ?: SyncStateEntity(kind = kind.key, status = "IDLE")).copy(
+            status = "CRAWLING",
+            totalItemsRemote = channels.size,
+            itemsIndexed = 0,
+            crawlCursorPage = 0,
+            syncEpoch = stamp,
+            lastError = null
+        )
+        syncStateDao.upsert(state)
+
+        try {
+            var indexed = 0
+            channels.chunked(SyncConstants.UPSERT_BATCH).forEach { chunk ->
+                movieDao.upsert(chunk.map { it.toM3uMovieEntity(portalId, stamp) })
+                indexed += chunk.size
+                state = state.copy(itemsIndexed = indexed)
+                syncStateDao.upsert(state)
+            }
+
+            // Tombstone sweep: entries removed from the playlist since last crawl.
+            prune(kind, portalId, stamp)
+
+            val finalCount = count(kind, portalId)
+            syncStateDao.upsert(
+                state.copy(
+                    status = "IDLE",
+                    totalItemsRemote = finalCount,
+                    itemsIndexed = finalCount,
+                    crawlCursorPage = 0,
+                    lastFullSyncAt = System.currentTimeMillis(),
+                    lastError = null
+                )
+            )
+            Log.d("SyncEngine", "fullCrawlM3u(${kind.key}) done: $finalCount rows")
+        } catch (e: Exception) {
+            syncStateDao.upsert(state.copy(status = "ERROR", lastError = e.message))
+            Log.e("SyncEngine", "fullCrawlM3u(${kind.key}) failed", e)
             throw e
         }
     }

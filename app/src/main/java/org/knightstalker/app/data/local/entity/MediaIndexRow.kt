@@ -24,4 +24,6 @@ interface MediaIndexRow {
     val actors: String
     val director: String
     val syncEpoch: Long
+    /** Container extension (mp4, mkv, ts, m3u8 …) as reported by the portal. Empty for non-Xtream. */
+    val ext: String
 }

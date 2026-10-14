@@ -88,10 +88,15 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
         val cover: String = "",
         val backdrop_path: List<String?>? = null,
         val category_id: String = "",
-        val category_ids: List<String>? = null
+        val category_ids: List<String>? = null,
+        val stream_icon: String = "",
+        val tmdb: String = "",
+        val trailer: String = "",
+        val added: String = ""
     ) {
         val extension: String get() = container_extension.ifBlank { "mp4" }
         val image: String get() = cover.ifBlank { movie_image }
+            .ifBlank { stream_icon }
             .ifBlank { backdrop_path?.firstOrNull { it != null } ?: "" }
     }
 
@@ -185,6 +190,25 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
     private suspend fun getJson(url: String): kotlinx.serialization.json.JsonElement =
         kotlinx.serialization.json.Json.parseToJsonElement(get(url))
 
+    /**
+     * Decode a JSON **array** straight from the response body into `List<T>` WITHOUT
+     * building a full [JsonElement] tree in memory. The Xtream `action=` endpoints
+     * return a bare array (`[{...},{...}]`), so for large catalogues (200k+ rows) this
+     * avoids retaining the parsed element tree alongside the decoded list — which
+     * previously pushed peak memory past the mobile heap and OOM-killed the process
+     * mid-crawl. Returns `null` when the body is not a bare array (e.g. the `section=`
+     * object envelope), so callers can fall back to their own handling.
+     */
+    private inline fun <reified T> decodeArrayOrNull(body: String): List<T>? {
+        return try {
+            // Use the injected `json` instance (ignoreUnknownKeys + coerceInputValues)
+            // so the decode is as lenient as the rest of the API client.
+            this.json.decodeFromString<List<T>>(body)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     // -------------------------------------------------------------- public
 
     /**
@@ -197,15 +221,15 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
         password: String
     ): Result<List<StreamInfo>> {
         return try {
-            // Try action variant first (broader compatibility)
+            // Try action variant first (broader compatibility). Decode the bare
+            // array directly from the body to avoid a JsonElement tree in memory.
             val url = api(baseUrl, username, password, action = "get_live_streams")
             val body = get(url)
-            val element = kotlinx.serialization.json.Json.parseToJsonElement(body)
-            if (element is kotlinx.serialization.json.JsonArray) {
-                val list = element.map { json.decodeFromJsonElement(StreamInfo.serializer(), it) }
-                Result.success(list)
+            val direct = decodeArrayOrNull<StreamInfo>(body)
+            if (direct != null) {
+                Result.success(direct)
             } else {
-                // Fallback: section=live
+                // Fallback: section=live object envelope
                 val url2 = api(baseUrl, username, password, section = "live")
                 val body2 = get(url2)
                 val resp = json.decodeFromString(XtreamResponse.serializer(), body2)
@@ -232,13 +256,8 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
             // Try action variant first
             val url = api(baseUrl, username, password, action = action)
             val body = get(url)
-            val element = kotlinx.serialization.json.Json.parseToJsonElement(body)
-            if (element is kotlinx.serialization.json.JsonArray) {
-                val list = element.map { json.decodeFromJsonElement(CategoryInfo.serializer(), it) }
-                Result.success(list)
-            } else {
-                Result.success(emptyList())
-            }
+            val list = decodeArrayOrNull<CategoryInfo>(body) ?: emptyList()
+            Result.success(list)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -257,13 +276,8 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
                 extra = mapOf("category_id" to categoryId)
             )
             val body = get(url)
-            val element = kotlinx.serialization.json.Json.parseToJsonElement(body)
-            if (element is kotlinx.serialization.json.JsonArray) {
-                val list = element.map { json.decodeFromJsonElement(StreamInfo.serializer(), it) }
-                Result.success(list)
-            } else {
-                Result.success(emptyList())
-            }
+            val list = decodeArrayOrNull<StreamInfo>(body) ?: emptyList()
+            Result.success(list)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -279,16 +293,15 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
             val extra = if (categoryId.isNullOrBlank()) emptyMap() else mapOf("category_id" to categoryId)
             val url = api(baseUrl, username, password, action = "get_vod_streams", extra = extra)
             val body = get(url)
-            val element = kotlinx.serialization.json.Json.parseToJsonElement(body)
-            val list = when (element) {
-                is kotlinx.serialization.json.JsonArray ->
-                    element.map { json.decodeFromJsonElement(VodItem.serializer(), it) }
-                else -> {
-                    // Fallback: section=on_demand
-                    val url2 = api(baseUrl, username, password, section = "on_demand")
-                    val resp = json.decodeFromString(XtreamResponse.serializer(), get(url2))
-                    resp.on_demand_list ?: emptyList()
-                }
+            // Decode the bare array straight from the body (no JsonElement tree).
+            val direct = decodeArrayOrNull<VodItem>(body)
+            val list = if (direct != null) {
+                direct
+            } else {
+                // Fallback: section=on_demand object envelope
+                val url2 = api(baseUrl, username, password, section = "on_demand")
+                val resp = json.decodeFromString(XtreamResponse.serializer(), get(url2))
+                resp.on_demand_list ?: emptyList()
             }
             Result.success(list)
         } catch (e: Exception) {
@@ -327,15 +340,15 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
             val extra = if (categoryId.isNullOrBlank()) emptyMap() else mapOf("category_id" to categoryId)
             val url = api(baseUrl, username, password, action = "get_series", extra = extra)
             val body = get(url)
-            val element = kotlinx.serialization.json.Json.parseToJsonElement(body)
-            val list = when (element) {
-                is kotlinx.serialization.json.JsonArray ->
-                    element.map { json.decodeFromJsonElement(SeriesItem.serializer(), it) }
-                else -> {
-                    val url2 = api(baseUrl, username, password, section = "series")
-                    val resp = json.decodeFromString(XtreamResponse.serializer(), get(url2))
-                    resp.series_list ?: emptyList()
-                }
+            // Decode the bare array straight from the body (no JsonElement tree).
+            val direct = decodeArrayOrNull<SeriesItem>(body)
+            val list = if (direct != null) {
+                direct
+            } else {
+                // Fallback: section=series object envelope
+                val url2 = api(baseUrl, username, password, section = "series")
+                val resp = json.decodeFromString(XtreamResponse.serializer(), get(url2))
+                resp.series_list ?: emptyList()
             }
             Result.success(list)
         } catch (e: Exception) {
@@ -368,11 +381,20 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
      * Builds the playable VOD URL:
      * `http://host:port/movie/user/pass/streamId/name.mp4`
      */
+    /**
+     * Builds the playable VOD URL:
+     *   `{base}/movie/{user}/{pass}/{streamId}.{ext}`
+     *
+     * Verified with `http://vpn.trxyh.xyz` (action= variant): the plain format
+     * returns 302 → CDN. The named format (`/movie/…/{streamId}/{name}.{ext}`)
+     * is rejected with HTTP 513 on this server.
+     */
     fun buildVodUrl(
         baseUrl: String,
         username: String,
         password: String,
         streamId: String,
+        name: String? = null,
         ext: String = "mp4"
     ): String {
         val base = baseUrl.trimEnd('/')

@@ -26,7 +26,7 @@ import org.knightstalker.app.ui.theme.TextSecondary
 fun VodScreen(
     viewModel: VodViewModel,
     onVodClick: (String, String) -> Unit,
-    onPlayVod: (cmd: String, name: String) -> Unit,
+    onPlayVod: (cmd: String, name: String, ext: String) -> Unit,
     onOpenDownloads: () -> Unit = {},
     isSeries: Boolean = false,
     onPlayEpisode: (seasonCmd: String, episode: Int, episodes: List<Int>, seriesName: String) -> Unit = { _, _, _, _ -> }
@@ -53,14 +53,15 @@ fun VodScreen(
         } else {
             VodDetailScreen(
                 vod = vod,
-                onPlay = { onPlayVod(vod.cmd, vod.name) },
+                onPlay = { onPlayVod(vod.cmd, vod.name, vod.ext) },
                 onDownload = {
                     viewModel.downloadVod(vod)
                     viewModel.selectVod(null)
                     onOpenDownloads()
                 },
                 onToggleFavorite = { viewModel.toggleFavorite(vod) },
-                onDismiss = { viewModel.selectVod(null) }
+                onDismiss = { viewModel.selectVod(null) },
+                loading = state.detailsLoading
             )
         }
         return

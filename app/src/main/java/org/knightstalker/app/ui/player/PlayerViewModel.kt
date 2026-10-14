@@ -250,7 +250,7 @@ class PlayerViewModel(
         }
     }
 
-    fun playVod(cmd: String, name: String = "") {
+    fun playVod(cmd: String, name: String = "", ext: String = "") {
         val portal = authManager.currentPortal ?: return
         currentItemId = cmd.hashCode().toString()
         currentCmd = cmd
@@ -259,7 +259,7 @@ class PlayerViewModel(
         _state.update { it.copy(channelName = name, error = null, isBuffering = true) }
 
         viewModelScope.launch {
-            vodRepository.createLink(portal.url, cmd)
+            vodRepository.createLink(portal.url, cmd, name, ext)
                 .onSuccess { url ->
                     _state.update { it.copy(currentStreamUrl = url) }
                     // Check for resume position

@@ -7,8 +7,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
-import androidx.paging.PagingSource
-import androidx.paging.PagingState
 import androidx.paging.cachedIn
 import androidx.paging.map
 import kotlinx.coroutines.Job
@@ -22,6 +20,7 @@ import org.knightstalker.app.data.local.sync.MediaKind
 import org.knightstalker.app.data.local.sync.SyncEngine
 import org.knightstalker.app.data.remote.ConnectionState
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.remote.TmdbApi
 import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.FavoriteRepository
 import org.knightstalker.app.data.repository.MediaIndexRepository
@@ -56,6 +55,8 @@ data class VodState(
     val syncStatus: String = "IDLE",   // IDLE | CRAWLING | DELTA | ERROR
     val itemsIndexed: Int = 0,
     val totalItemsRemote: Int = 0,
+    /** True while TMDB detail enrichment is in flight for the selected VOD. */
+    val detailsLoading: Boolean = false,
     // Seasons/episodes for the selected series (Series mode only).
     val seasons: List<Season> = emptyList(),
     val seasonsLoading: Boolean = false,
@@ -76,6 +77,7 @@ class VodViewModel(
     private val syncEngine: SyncEngine,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val seriesRatingRepository: SeriesRatingRepository,
+    private val tmdbApi: TmdbApi,
     private val mode: ContentMode = ContentMode.Vod
 ) : ViewModel() {
 
@@ -163,21 +165,13 @@ class VodViewModel(
         val q = _state.value.searchQuery.trim()
         val categoryId = if (cat == "*") null else cat
 
-        // M3U has no crawlable catalogue — page directly from the remote API so the grid
-        // works the moment the portal connects. STALKER and XTREAM both serve the grid
-        // from the local Room index: for XTREAM the index is built once by
-        // SyncEngine.fullCrawlXtream, so scrolling never re-downloads / re-parses the
-        // whole (hundreds-of-thousands-of-rows) list — that repeated full parse is what
-        // used to OOM the process a few seconds after the catalogue first appeared.
-        if (portal.type == org.knightstalker.app.domain.model.PortalType.M3U) {
-            val remoteSource: PagingSource<Int, VodItem> = RemoteVodPagingSource(portal, categoryId, q)
-            val remoteFlow = Pager(PagingConfig(pageSize = 60, enablePlaceholders = false)) { remoteSource }
-                .flow
-                .cachedIn(viewModelScope)
-            _state.update { it.copy(items = remoteFlow) }
-            return
-        }
-
+        // STALKER, XTREAM and M3U all serve the grid from the local Room index. For XTREAM
+        // the index is built once by SyncEngine.fullCrawlXtream; for M3U by
+        // SyncEngine.fullCrawlM3u (the in-memory playlist). This keeps scrolling off the
+        // network — no repeated re-download / re-parse of the (potentially huge) list —
+        // which is what used to OOM the process a few seconds after the catalogue
+        // first appeared. The grid binds to Room from frame one; it fills in as the
+        // background crawl indexes rows.
         val sortToken = when (_state.value.sortBy) {
             VodSort.Rating -> "RATING"
             VodSort.Year -> "YEAR"
@@ -187,7 +181,11 @@ class VodViewModel(
         // Review = rated only, for movies. Series ratings are enriched lazily from TVmaze,
         // so keep unrated series visible (NULLs sort last) — otherwise they'd be hidden
         // here and never scroll into view to get fetched.
-        val ratedOnly = if (mode == ContentMode.Vod && _state.value.sortBy == VodSort.Rating) 1 else 0
+        //
+        // M3U entries carry no rating (the playlist format has none), so a "rated only"
+        // filter would hide the entire grid — keep them visible in every case.
+        val isM3u = portal.type == org.knightstalker.app.domain.model.PortalType.M3U
+        val ratedOnly = if (mode == ContentMode.Vod && _state.value.sortBy == VodSort.Rating && !isM3u) 1 else 0
         // Build the FTS string first, then derive hasQuery from it. A query made up
         // entirely of metacharacters (e.g. "***" or "():") sanitizes to "", which is an
         // invalid FTS MATCH expression and would crash SQLite. Treating an empty result
@@ -209,40 +207,6 @@ class VodViewModel(
         _state.update { it.copy(items = flow) }
     }
 
-    /**
-     * Pages a remote XTREAM / M3U catalog directly from the API, bypassing the local
-     * crawl index. The repository already filters by category/search and returns the
-     * total count, which is used here to stop paging once the last page is reached.
-     */
-    private inner class RemoteVodPagingSource(
-        private val portal: org.knightstalker.app.domain.model.Portal,
-        private val categoryId: String?,
-        private val search: String
-    ) : PagingSource<Int, VodItem>() {
-        override suspend fun load(params: LoadParams<Int>): LoadResult<Int, VodItem> {
-            val localKey = params.key ?: 0
-            val remotePage = localKey + 1  // repository pages are 1-based
-            return try {
-                val result = if (mode == ContentMode.Vod) {
-                    vodRepository.getVodList(portal.url, portal.id, categoryId, remotePage, search.ifBlank { null })
-                } else {
-                    vodRepository.getSeriesList(portal.url, portal.id, categoryId, remotePage, search.ifBlank { null })
-                }
-                val (items, total) = result.getOrThrow()
-                val nextKey = if (items.isEmpty() || remotePage * 60 >= total) null else localKey + 1
-                LoadResult.Page(
-                    data = items,
-                    prevKey = if (localKey == 0) null else localKey - 1,
-                    nextKey = nextKey
-                )
-            } catch (e: Exception) {
-                LoadResult.Error(e)
-            }
-        }
-
-        override fun getRefreshKey(state: PagingState<Int, VodItem>): Int? = null
-    }
-
     private fun MediaIndexRow.toVodItem() = VodItem(
         id = itemId,
         name = name,
@@ -254,7 +218,9 @@ class VodViewModel(
         duration = durationMin?.toString(),
         director = director.ifEmpty { null },
         actors = actors.ifEmpty { null },
-        isFavorite = false
+        isFavorite = false,
+        ext = ext,
+        tmdbId = tmdbId
     )
 
     fun selectCategory(categoryId: String) {
@@ -294,7 +260,7 @@ class VodViewModel(
                     logo = fav.logo,
                     isFavorite = true
                 )
-            }
+            } // ext defaults to "" — favorites store no container extension
             _state.update { it.copy(items = flowOf(PagingData.from(list))) }
         }
     }
@@ -317,6 +283,55 @@ class VodViewModel(
         // A top-level series has no directly-playable cmd; load its seasons so the
         // user can pick an episode instead of the player erroring on an empty cmd.
         if (vod != null && mode == ContentMode.Series) loadSeasons(vod.id)
+        // For VOD: the Xtream `action=` endpoint only returns name/icon/rating/tmdb,
+        // so enrich the detail from TMDB when a key is available.
+        if (vod != null && mode == ContentMode.Vod) enrichVodDetails(vod)
+    }
+
+    /**
+     * Fetch synopsis / cast / genres / runtime / release date from TMDB for the
+     * selected VOD and merge them into [VodState.selectedVod]. No-op when the portal
+     * supplied no TMDB id or no API key is configured. Runs once per id (cached).
+     */
+    private val tmdbCache = HashMap<String, VodItem>()
+    private fun enrichVodDetails(vod: VodItem) {
+        val tmdbId = vod.tmdbId
+        if (tmdbId.isNullOrBlank() || tmdbId == "None") return
+        if (!tmdbApi.isEnabled()) return
+        // Already fetched in this session (either merged or previously failed).
+        if (tmdbCache.containsKey(tmdbId)) return
+        _state.update { it.copy(detailsLoading = true) }
+        viewModelScope.launch {
+            tmdbApi.movieDetails(tmdbId)
+                .onSuccess { m ->
+                    // Merge TMDB metadata over the sparse portal fields, but never
+                    // clobber values the portal already provided with real data.
+                    val merged = vod.copy(
+                        description = m.overview.ifBlank { vod.description },
+                        year = m.releaseYear().ifBlank { vod.year },
+                        genre = m.genreNames().takeIf { it.isNotEmpty() }?.joinToString(", ") ?: vod.genre,
+                        duration = m.runtime?.takeIf { it > 0 }?.let { "${it / 60} h ${it % 60} min" } ?: vod.duration,
+                        director = m.director() ?: vod.director,
+                        actors = m.castLine().ifBlank { vod.actors },
+                        rating = vod.rating ?: m.vote_average?.takeIf { it > 0.0 }?.let { "%.1f".format(it) },
+                        logo = vod.logo,
+                        tmdbId = vod.tmdbId
+                    )
+                    tmdbCache[tmdbId] = merged
+                    // Only apply if this VOD is still the one on screen.
+                    _state.update { st ->
+                        st.copy(
+                            detailsLoading = false,
+                            selectedVod = st.selectedVod?.takeIf { it.id == vod.id }?.let { merged }
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    android.util.Log.d("VodDetail", "TMDB enrichment failed for $tmdbId: ${e.message}")
+                    tmdbCache[tmdbId] = vod // mark checked so we don't retry endlessly
+                    _state.update { it.copy(detailsLoading = false) }
+                }
+        }
     }
 
     private fun loadSeasons(seriesId: String) {
@@ -386,14 +401,15 @@ class VodViewModel(
     fun downloadVod(vod: VodItem) {
         val portal = authManager.currentPortal ?: return
         viewModelScope.launch {
-            vodRepository.createLink(portal.url, vod.cmd)
+            vodRepository.createLink(portal.url, vod.cmd, vod.name, vod.ext)
                 .onSuccess { url ->
                     downloadRepository.startDownload(
                         id = "vod_${vod.id}_${System.currentTimeMillis()}",
                         name = vod.name,
                         streamUrl = url,
                         cmd = vod.cmd,
-                        portalUrl = portal.url
+                        portalUrl = portal.url,
+                        ext = vod.ext
                     )
                 }
         }
@@ -409,6 +425,7 @@ class VodViewModel(
         private val syncEngine: SyncEngine,
         private val watchHistoryRepository: WatchHistoryRepository,
         private val seriesRatingRepository: SeriesRatingRepository,
+        private val tmdbApi: TmdbApi,
         private val mode: ContentMode = ContentMode.Vod
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
@@ -416,7 +433,7 @@ class VodViewModel(
             return VodViewModel(
                 vodRepository, favoriteRepository, downloadRepository, authManager,
                 preferences, mediaIndexRepository, syncEngine, watchHistoryRepository,
-                seriesRatingRepository, mode
+                seriesRatingRepository, tmdbApi, mode
             ) as T
         }
     }

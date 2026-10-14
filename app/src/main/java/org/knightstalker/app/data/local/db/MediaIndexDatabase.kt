@@ -25,6 +25,25 @@ val MEDIA_MIGRATION_1_2 = object : Migration(1, 2) {
     }
 }
 
+/** Add the `ext` column (container extension) for building correct Xtream playback URLs. */
+val MEDIA_MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE movie_index ADD COLUMN ext TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE series_index ADD COLUMN ext TEXT NOT NULL DEFAULT ''")
+    }
+}
+
+/**
+ * Track the crawl format generation per kind. When the code's [crawlFormatVersion]
+ * (see SyncEngine.CRAWL_FORMAT_VERSION) is higher than the stored value, one full
+ * re-crawl is forced so newly mapped fields (TMDB id, year, poster) get populated.
+ */
+val MEDIA_MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE media_sync_state ADD COLUMN crawlFormatVersion INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 @Database(
     entities = [
         MovieIndexEntity::class,
@@ -33,7 +52,7 @@ val MEDIA_MIGRATION_1_2 = object : Migration(1, 2) {
         SeriesFtsEntity::class,
         SyncStateEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class MediaIndexDatabase : RoomDatabase() {
@@ -48,7 +67,7 @@ abstract class MediaIndexDatabase : RoomDatabase() {
                 MediaIndexDatabase::class.java,
                 "media_index.db"
             )
-                .addMigrations(MEDIA_MIGRATION_1_2)
+                .addMigrations(MEDIA_MIGRATION_1_2, MEDIA_MIGRATION_2_3, MEDIA_MIGRATION_3_4)
                 .fallbackToDestructiveMigration()
                 .build()
         }

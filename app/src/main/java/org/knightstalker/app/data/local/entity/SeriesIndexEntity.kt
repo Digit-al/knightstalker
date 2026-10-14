@@ -40,5 +40,8 @@ data class SeriesIndexEntity(
     // defaultValue matches the ALTER TABLE ... DEFAULT 0 in MEDIA_MIGRATION_1_2 so Room's
     // schema validation passes.
     @ColumnInfo(defaultValue = "0")
-    val ratingCheckedAt: Long = 0L
+    val ratingCheckedAt: Long = 0L,
+    /** Container extension (mp4, mkv, …) for building the playable Xtream URL. Empty for M3U. */
+    @ColumnInfo(defaultValue = "")
+    override val ext: String = ""
 ) : MediaIndexRow

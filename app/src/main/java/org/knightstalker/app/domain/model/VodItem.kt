@@ -13,7 +13,11 @@ data class VodItem(
     val duration: String? = null,
     val director: String? = null,
     val actors: String? = null,
-    val isFavorite: Boolean = false
+    val isFavorite: Boolean = false,
+    /** Container extension (mp4, mkv, …) for building the playable Xtream URL. */
+    val ext: String = "",
+    /** TMDB movie/series ID when the portal supplies one — used to enrich details. */
+    val tmdbId: String? = null
 )
 
 data class VodCategory(

@@ -40,6 +40,7 @@ fun PlayerScreen(
     type: String,
     cmd: String,
     name: String,
+    ext: String = "",
     onBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
@@ -67,7 +68,7 @@ fun PlayerScreen(
     LaunchedEffect(cmd) {
         when (type) {
             "local" -> viewModel.playLocal(cmd, name)
-            "vod" -> viewModel.playVod(cmd, name)
+            "vod" -> viewModel.playVod(cmd, name, ext)
             "episode" -> {
                 // cmd is "<seasonCmd>|<episode>|<ep1,ep2,...>" (season cmd is base64, no pipe).
                 val parts = cmd.split("|")

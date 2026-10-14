@@ -13,10 +13,12 @@ import org.knightstalker.app.data.local.prefs.UserPreferences
 import org.knightstalker.app.data.local.sync.SyncEngine
 import org.knightstalker.app.data.remote.StalkerApi
 import org.knightstalker.app.data.remote.StalkerAuthManager
+import org.knightstalker.app.data.remote.TmdbApi
 import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.interceptor.MacCookieInterceptor
 import org.knightstalker.app.data.remote.interceptor.StalkerAuthInterceptor
 import org.knightstalker.app.data.repository.*
+import org.knightstalker.app.BuildConfig
 import java.util.concurrent.TimeUnit
 
 class AppModule(private val context: Context) {
@@ -117,11 +119,16 @@ class AppModule(private val context: Context) {
         SeriesRatingRepository(plainHttpClient, json, seriesIndexDao)
     }
 
+    val tmdbApi: TmdbApi by lazy {
+        // The TMDB API key is optional: when absent the enrichment is simply skipped.
+        TmdbApi(plainHttpClient, json, BuildConfig.TMDB_API_KEY)
+    }
+
     val downloadRepository: DownloadRepository by lazy {
         DownloadRepository(context).apply {
             // Re-mint a fresh play link before each download attempt so resume /
             // retry survives the portal's expiring single-use play tokens.
-            linkResolver = { portalUrl, cmd -> vodRepository.createLink(portalUrl, cmd) }
+            linkResolver = { portalUrl, cmd, name, ext -> vodRepository.createLink(portalUrl, cmd, name, ext) }
         }
     }
 }

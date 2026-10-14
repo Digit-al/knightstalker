@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+}
+
+// Load signing credentials from keystore.properties (gitignored).
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -15,6 +23,11 @@ android {
         targetSdk = 34
         versionCode = 4
         versionName = "1.3.0"
+
+        // Optional TMDB API key for enriching VOD details (synopsis, cast, genre,
+        // duration, release date). Empty -> enrichment silently skipped.
+        // Load from keystore.properties (gitignored) to keep the secret out of VCS.
+        buildConfigField("String", "TMDB_API_KEY", "\"" + keystoreProps.getProperty("tmdbApiKey", "") + "\"")
     }
 
     dependenciesInfo {
@@ -22,11 +35,21 @@ android {
         includeInBundle = false
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file(keystoreProps.getProperty("storeFile", "david-release.keystore"))
+            storePassword = keystoreProps.getProperty("storePassword")
+            keyAlias = keystoreProps.getProperty("keyAlias")
+            keyPassword = keystoreProps.getProperty("keyPassword")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             isCrunchPngs = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

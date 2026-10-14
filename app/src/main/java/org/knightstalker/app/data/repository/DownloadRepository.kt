@@ -36,7 +36,9 @@ data class DownloadTask(
     // re-minted on resume/retry — portal play tokens are single-use and expire,
     // so the original `url` is dead by the time a download is resumed.
     val cmd: String? = null,
-    val portalUrl: String? = null
+    val portalUrl: String? = null,
+    // Container extension (mp4, mkv, …) for building the correct Xtream URL on re-mint.
+    val ext: String? = null
 )
 
 enum class DownloadStatus {
@@ -54,7 +56,8 @@ private data class PersistedDownload(
     val filePath: String? = null,
     val error: String? = null,
     val cmd: String? = null,
-    val portalUrl: String? = null
+    val portalUrl: String? = null,
+    val ext: String? = null
 )
 
 class DownloadRepository(private val context: Context) {
@@ -67,11 +70,13 @@ class DownloadRepository(private val context: Context) {
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
-     * Re-resolves a fresh, playable stream URL from (portalUrl, cmd). Wired up in
-     * the DI module to the Stalker create_link call. Used to refresh the expiring
-     * play token before every download attempt so resume/retry actually work.
+     * Re-resolves a fresh, playable stream URL from (portalUrl, cmd, name). Wired up
+     * in the DI module to the Stalker create_link call. Used to refresh the expiring
+     * play token before every download attempt so resume/retry actually work. The
+     * [name] and [ext] are required for Xtream portals (the VOD URL embeds the
+     * title and the real container extension).
      */
-    var linkResolver: (suspend (portalUrl: String, cmd: String) -> Result<String>)? = null
+    var linkResolver: (suspend (portalUrl: String, cmd: String, name: String, ext: String) -> Result<String>)? = null
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -101,7 +106,8 @@ class DownloadRepository(private val context: Context) {
         name: String,
         streamUrl: String,
         cmd: String? = null,
-        portalUrl: String? = null
+        portalUrl: String? = null,
+        ext: String? = null
     ) {
         // Avoid duplicate
         if (_downloads.value.any { it.id == id && it.status == DownloadStatus.DOWNLOADING }) return
@@ -109,7 +115,7 @@ class DownloadRepository(private val context: Context) {
         val task = DownloadTask(
             id = id, name = name, url = streamUrl,
             status = DownloadStatus.DOWNLOADING,
-            cmd = cmd, portalUrl = portalUrl
+            cmd = cmd, portalUrl = portalUrl, ext = ext
         )
         _downloads.update { list ->
             list.filter { it.id != id } + task
@@ -227,7 +233,7 @@ class DownloadRepository(private val context: Context) {
         val cmd = task.cmd
         val portalUrl = task.portalUrl
         val effectiveUrl = if (resolver != null && cmd != null && portalUrl != null) {
-            resolver(portalUrl, cmd).getOrElse { e ->
+            resolver(portalUrl, cmd, task.name, task.ext ?: "").getOrElse { e ->
                 updateTask(task.id) {
                     it.copy(status = DownloadStatus.FAILED, error = "Could not refresh link: ${e.message}")
                 }
@@ -247,8 +253,16 @@ class DownloadRepository(private val context: Context) {
         val response = client.newCall(requestBuilder.build()).execute()
 
         if (!response.isSuccessful && response.code != 206) {
+            // Diagnostics: surface the server's own error body — non-standard codes
+            // like 513/551 from Xtream panels come with a message that says
+            // exactly why the stream URL was rejected.
+            val errorBody = runCatching { response.body?.string()?.take(500) }.getOrNull().orEmpty()
+            Log.w("Download", "stream request failed: url=${effectiveUrl} code=${response.code} body=$errorBody")
             updateTask(task.id) {
-                it.copy(status = DownloadStatus.FAILED, error = "HTTP ${response.code}")
+                it.copy(
+                    status = DownloadStatus.FAILED,
+                    error = "HTTP ${response.code} — ${errorBody.ifBlank { response.message.orEmpty() }}"
+                )
             }
             persist()
             return
@@ -346,7 +360,8 @@ class DownloadRepository(private val context: Context) {
                     filePath = task.filePath,
                     error = task.error,
                     cmd = task.cmd,
-                    portalUrl = task.portalUrl
+                    portalUrl = task.portalUrl,
+                    ext = task.ext
                 )
             }
             persistFile.writeText(json.encodeToString(data))
@@ -376,7 +391,8 @@ class DownloadRepository(private val context: Context) {
                     filePath = p.filePath,
                     error = p.error,
                     cmd = p.cmd,
-                    portalUrl = p.portalUrl
+                    portalUrl = p.portalUrl,
+                    ext = p.ext
                 )
             }
             _downloads.value = tasks

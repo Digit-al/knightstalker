@@ -171,11 +171,28 @@ class VodRepository(
 
     // -------------------------------------------------------------- Links
 
-    suspend fun createLink(baseUrl: String, cmd: String): Result<String> {
+    suspend fun createLink(
+        baseUrl: String,
+        cmd: String,
+        name: String? = null,
+        ext: String? = null
+    ): Result<String> {
         return when (portalType()) {
             PortalType.XTREAM -> {
                 val portal = xtreamPortal()
-                Result.success(xtreamApi.buildVodUrl(portal.url, portal.username, portal.password, cmd))
+                // Pass the (URL-encoded) title so the Xtream URL uses the named
+                // format, and the real container extension as reported by the
+                // server — a forced `.mp4` is rejected on `action=` panels.
+                Result.success(
+                    xtreamApi.buildVodUrl(
+                        portal.url,
+                        portal.username,
+                        portal.password,
+                        cmd,
+                        name,
+                        ext?.takeIf { it.isNotBlank() } ?: "mp4"
+                    )
+                )
             }
             PortalType.M3U -> Result.success(cmd)
             else -> api.createVodLink(baseUrl, cmd).map { response ->

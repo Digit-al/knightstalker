@@ -33,5 +33,8 @@ data class MovieIndexEntity(
     override val tmdbId: String?,
     override val actors: String,
     override val director: String,
-    override val syncEpoch: Long
+    override val syncEpoch: Long,
+    /** Container extension (mp4, mkv, …) for building the playable Xtream URL. Empty for M3U. */
+    @androidx.room.ColumnInfo(defaultValue = "")
+    override val ext: String = ""
 ) : MediaIndexRow

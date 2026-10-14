@@ -53,11 +53,12 @@ sealed class NavRoute(val route: String) {
         fun createRoute(id: Long? = null) = if (id != null) "portals/edit?id=$id" else "portals/edit"
     }
     data object Home : NavRoute("home")
-    data object Player : NavRoute("player/{type}?cmd={cmd}&name={name}") {
-        fun createRoute(type: String, cmd: String, name: String): String {
+    data object Player : NavRoute("player/{type}?cmd={cmd}&name={name}&ext={ext}") {
+        fun createRoute(type: String, cmd: String, name: String, ext: String = ""): String {
             val encodedCmd = URLEncoder.encode(cmd, "UTF-8")
             val encodedName = URLEncoder.encode(name, "UTF-8")
-            return "player/$type?cmd=$encodedCmd&name=$encodedName"
+            val encodedExt = URLEncoder.encode(ext, "UTF-8")
+            return "player/$type?cmd=$encodedCmd&name=$encodedName&ext=$encodedExt"
         }
     }
 }
@@ -129,16 +130,18 @@ fun KnightNavGraph() {
 
         // Player
         composable(
-            route = "player/{type}?cmd={cmd}&name={name}",
+            route = "player/{type}?cmd={cmd}&name={name}&ext={ext}",
             arguments = listOf(
                 navArgument("type") { type = NavType.StringType },
                 navArgument("cmd") { type = NavType.StringType; defaultValue = "" },
-                navArgument("name") { type = NavType.StringType; defaultValue = "" }
+                navArgument("name") { type = NavType.StringType; defaultValue = "" },
+                navArgument("ext") { type = NavType.StringType; defaultValue = "" }
             )
         ) { entry ->
             val type = entry.arguments?.getString("type") ?: "itv"
             val cmd = URLDecoder.decode(entry.arguments?.getString("cmd") ?: "", "UTF-8")
             val name = URLDecoder.decode(entry.arguments?.getString("name") ?: "", "UTF-8")
+            val ext = URLDecoder.decode(entry.arguments?.getString("ext") ?: "", "UTF-8")
             val vm: PlayerViewModel = viewModel(
                 factory = PlayerViewModel.Factory(context, module.channelRepository, module.vodRepository, module.authManager, module.downloadRepository, module.watchHistoryRepository)
             )
@@ -147,6 +150,7 @@ fun KnightNavGraph() {
                 type = type,
                 cmd = cmd,
                 name = name,
+                ext = ext,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -313,15 +317,15 @@ private fun HomeScreen(
 
                 composable("vod") {
                     val vm: VodViewModel = viewModel(
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, module.seriesRatingRepository, ContentMode.Vod)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, module.seriesRatingRepository, module.tmdbApi, ContentMode.Vod)
                     )
                     VodScreen(
                         viewModel = vm,
                         onVodClick = { id, cmd ->
                             navController.navigate(NavRoute.Player.createRoute("vod", cmd, ""))
                         },
-                        onPlayVod = { cmd, name ->
-                            navController.navigate(NavRoute.Player.createRoute("vod", cmd, name))
+                        onPlayVod = { cmd, name, ext ->
+                            navController.navigate(NavRoute.Player.createRoute("vod", cmd, name, ext))
                         },
                         onOpenDownloads = { goToTab("downloads") }
                     )
@@ -330,12 +334,12 @@ private fun HomeScreen(
                 composable("series") {
                     val vm: VodViewModel = viewModel(
                         key = "series",
-                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, module.seriesRatingRepository, ContentMode.Series)
+                        factory = VodViewModel.Factory(module.vodRepository, module.favoriteRepository, module.downloadRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.syncEngine, module.watchHistoryRepository, module.seriesRatingRepository, module.tmdbApi, ContentMode.Series)
                     )
                     VodScreen(
                         viewModel = vm,
                         onVodClick = { _, _ -> },
-                        onPlayVod = { _, _ -> },
+                        onPlayVod = { _, _, _ -> },
                         onOpenDownloads = { goToTab("downloads") },
                         isSeries = true,
                         onPlayEpisode = { seasonCmd, episode, episodes, seriesName ->
