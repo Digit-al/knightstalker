@@ -429,24 +429,35 @@ class XmltvParser {
     }
 
     /**
-     * Converts an XMLTV wall-clock time to epoch millis.
+     * Converts an XMLTV wall-clock time to epoch SECONDS.
      *
      * When the feed specifies a UTC offset (the classic `+0200`), the
      * wall-clock is interpreted AT THAT offset — independent of the device's
      * time zone. When the feed omits the offset, the time is interpreted in the
      * device's local zone (the standard XMLTV fallback).
+     *
+     * Implemented with `java.util.GregorianCalendar` only — `java.time` is not
+     * available natively below API 26 and would crash the parser (silently
+     * yielding 0 entries) on API 24/25 without core-library desugaring.
      */
     private fun toEpochSeconds(
         year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int,
         offset: Long?
     ): Long {
-        val clock = java.time.LocalDateTime.of(year, month, day, hour, minute, second)
         return if (offset != null) {
-            java.time.OffsetDateTime.of(clock, java.time.ZoneOffset.ofTotalSeconds(offset.toInt()))
-                .toInstant()
-                .toEpochMilli()
+            // Wall clock is expressed at `offset` (e.g. +0200): build the epoch
+            // as if UTC, then subtract the offset.
+            val utc = java.util.GregorianCalendar(java.util.TimeZone.getTimeZone("UTC"), java.util.Locale.US)
+            utc.clear()
+            utc.set(year, month - 1, day, hour, minute, second)
+            utc.timeInMillis / 1000L - offset
         } else {
-            clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            // No offset in the feed: interpret in the device's local zone
+            // (GregorianCalendar in the default TZ handles DST correctly).
+            val cal = java.util.GregorianCalendar(java.util.Locale.US)
+            cal.clear()
+            cal.set(year, month - 1, day, hour, minute, second)
+            cal.timeInMillis / 1000L
         }
     }
 

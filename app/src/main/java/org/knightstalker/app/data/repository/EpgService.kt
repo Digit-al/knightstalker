@@ -71,7 +71,13 @@ class EpgService(
         val entryCount: Int = 0,
         val lastFetched: Long = 0,
         val error: String? = null,
-        val isUpToDate: Boolean = true
+        val isUpToDate: Boolean = true,
+        // Diagnostics to tell a corrupted/truncated download apart from a
+        // parser failure: raw bytes downloaded, decoded XML size, and a short
+        // preview of the XML content.
+        val rawSize: Int = 0,
+        val xmlSize: Int = 0,
+        val feedHead: String = ""
     )
 
     /**
@@ -118,6 +124,14 @@ class EpgService(
                 }
                 if (xml.isBlank()) throw Exception("Empty EPG feed")
 
+                // Diagnostics: how much did we actually get, and what does it
+                // look like? A real xmltv_fr feed decodes to ~65 MB of XML.
+                // If xmlSize is tiny or the head is not well-formed XMLTV, the
+                // download — not the parser — is at fault.
+                val rawSize = raw.size
+                val xmlSize = xml.length
+                val feedHead = xml.take(300).replace("\n", " ")
+
                 // Single streaming SAX pass — avoids parsing the 67 MB XML twice.
                 val result = parser.parseAll(xml, day = null)
                 val schedules = result.schedules
@@ -158,7 +172,10 @@ class EpgService(
                         entryCount = entryCount,
                         lastFetched = System.currentTimeMillis(),
                         error = effectiveError,
-                        isUpToDate = true
+                        isUpToDate = true,
+                        rawSize = rawSize,
+                        xmlSize = xmlSize,
+                        feedHead = feedHead
                     )
                 }
                 Log.d(TAG, "XMLTV feed for portal $portalId: $allIds channels, $entryCount entries, error=$effectiveError")

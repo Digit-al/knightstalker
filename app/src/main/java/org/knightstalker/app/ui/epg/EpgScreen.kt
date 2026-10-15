@@ -86,14 +86,21 @@ fun EpgScreen(
         // error, or the number of channels/programmes it parsed. A feed that
         // fails to load looks identical to a portal with no EPG otherwise.
         if (state.epgFeedApplicable) {
+            // When the feed is loaded but empty, show raw diagnostics so we can
+            // tell a corrupted/truncated download apart from a parser failure.
+            val feedEmpty = state.epgFeedEntries == 0 && state.epgFeedChannels == 0
+            val rawKo = state.epgFeedRawSize / 1024
+            val xmlMo = state.epgFeedXmlSize / 1024 / 1024
             val feedText = when {
                 state.epgFeedLoading -> "Chargement du guide…"
                 state.epgFeedError != null -> "Guide: ${state.epgFeedError}"
+                feedEmpty -> "Guide: 0 chaîne/programme — brut ${rawKo} Ko → xml ${xmlMo} Mo — début: ${state.epgFeedHead.take(120)}"
                 else -> "Guide: ${state.epgFeedChannels} chaînes, ${state.epgFeedEntries} programmes"
             }
             val feedColor = when {
                 state.epgFeedLoading -> TextSecondary
                 state.epgFeedError != null -> WarningOrange
+                feedEmpty -> WarningOrange
                 else -> TextSecondary
             }
             Row(

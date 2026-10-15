@@ -37,7 +37,13 @@ data class EpgState(
     val epgFeedApplicable: Boolean = false,
     // Per-channel reason shown when a channel has no programmes even though the
     // feed is loaded (e.g. "chaîne ... absente du feed").
-    val epgDiagnose: Map<String, String> = emptyMap()
+    val epgDiagnose: Map<String, String> = emptyMap(),
+    // Raw diagnostics: bytes downloaded, decoded XML size, and a short preview
+    // of the feed content — to tell a corrupted/truncated download apart from
+    // a parser failure.
+    val epgFeedRawSize: Int = 0,
+    val epgFeedXmlSize: Int = 0,
+    val epgFeedHead: String = ""
 )
 
 class EpgViewModel(
@@ -76,7 +82,10 @@ class EpgViewModel(
                         epgFeedLoading = s.isLoading,
                         epgFeedError = s.error,
                         epgFeedChannels = s.channelCount,
-                        epgFeedEntries = s.entryCount
+                        epgFeedEntries = s.entryCount,
+                        epgFeedRawSize = s.rawSize,
+                        epgFeedXmlSize = s.xmlSize,
+                        epgFeedHead = s.feedHead
                     )
                 }
                 wasLoading = s.isLoading
