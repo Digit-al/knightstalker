@@ -98,8 +98,13 @@ class XmltvParser {
                         qName: String,
                         attrs: Attributes
                     ) {
-                        // Use localName so namespace-prefixed elements still match.
-                        when (localName) {
+                        // Some JVMs (including Android on certain API levels)
+                        // leave localName empty when the parser is not
+                        // namespace-aware, putting the element name in qName
+                        // instead. XMLTV feeds never use namespace prefixes,
+                        // so qName is always the plain element name here.
+                        val name = localName.ifBlank { qName }
+                        when (name) {
                             "channel" -> {
                                 chanId = attrs.getValue("id")
                             }
@@ -165,7 +170,9 @@ class XmltvParser {
                         localName: String,
                         qName: String
                     ) {
-                        when (localName) {
+                        // Same localName/qName quirk as in startElement.
+                        val name = localName.ifBlank { qName }
+                        when (name) {
                             "title" -> {
                                 inTitle = false
                             }
@@ -181,8 +188,8 @@ class XmltvParser {
                             "channel" -> {
                                 val id = chanId
                                 if (id != null && id.isNotBlank()) {
-                                    val name = chanName?.toString()?.trim()?.takeIf { it.isNotBlank() }
-                                    channels.add(FeedChannel(id, name))
+                                    val displayName = chanName?.toString()?.trim()?.takeIf { it.isNotBlank() }
+                                    channels.add(FeedChannel(id, displayName))
                                 }
                                 chanId = null
                                 chanName = null

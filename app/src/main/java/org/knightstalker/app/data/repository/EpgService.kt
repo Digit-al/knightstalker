@@ -20,6 +20,7 @@ import org.knightstalker.app.data.local.db.PortalDao
 import org.knightstalker.app.data.local.entity.PortalEntity
 import org.knightstalker.app.data.remote.parser.XmltvParser
 import org.knightstalker.app.domain.model.EpgEntry
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -32,9 +33,10 @@ import java.util.Locale
  * the Stalker EPG API.
  *
  * Channel matching: a channel's EPG key (`tvg-id` for M3U, `epg_channel_id` for
- * Xtream) is matched against the feed's `<channel id="...">` values — exactly,
- * then case-insensitively, then case-insensitively without extension/whitespace
- * (e.g. `france2.france.tv` vs `france2francetv`).
+ * Xtream) is matched against the feed's declared `<channel id>` values —
+ * exactly first, then case/accents/punctuation-insensitively — and as a last
+ * resort against normalized display names (portals whose EPG key is the
+ * channel NAME rather than an id).
  */
 class EpgService(
     private val client: OkHttpClient,
@@ -46,7 +48,9 @@ class EpgService(
     private data class FeedCache(
         val fetchedAt: Long,
         val schedules: Map<String, List<EpgEntry>>,
-        val channels: Map<String, String>  // channel id -> display name
+        val channels: Map<String, String>,  // channel id -> display name
+        val byNormId: Map<String, String>,  // normalized id -> id
+        val byNormName: Map<String, String> // normalized display name -> id
     )
 
     private val cache = mutableMapOf<Long, FeedCache>()
@@ -69,14 +73,6 @@ class EpgService(
         val error: String? = null,
         val isUpToDate: Boolean = true
     )
-
-    companion object {
-        private const val TAG = "EpgService"
-        private const val STALE_MS = 24 * 60 * 60_000L // 24 h
-
-        fun isStale(fetchedAt: Long): Boolean =
-            System.currentTimeMillis() - fetchedAt > STALE_MS
-    }
 
     /**
      * Ensures the XMLTV feed for [portalId] is cached and fresh (24 h TTL).
@@ -131,11 +127,21 @@ class EpgService(
                 val allIds = (channelIds + schedules.keys).toSet()
                 val entryCount = schedules.values.sumOf { it.size }
 
+                val idToName = result.channels.associate { it.id to (it.displayName ?: "") }
+                val byNormId = mutableMapOf<String, String>()
+                val byNormName = mutableMapOf<String, String>()
+                for ((id, name) in idToName) {
+                    byNormId.putIfAbsent(normalizeCompact(id), id)
+                    if (name.isNotBlank()) byNormName.putIfAbsent(normalizeCompact(name), id)
+                }
+
                 synchronized(cache) {
                     cache[portalId] = FeedCache(
                         fetchedAt = System.currentTimeMillis(),
                         schedules = schedules,
-                        channels = result.channels.associate { it.id to (it.displayName ?: "") }
+                        channels = idToName,
+                        byNormId = byNormId,
+                        byNormName = byNormName
                     )
                 }
                 _status.update {
@@ -198,28 +204,49 @@ class EpgService(
     }
 
     /**
-     * Resolves an arbitrary EPG key to a feed channel id.
+     * Resolves an arbitrary EPG key to a feed channel id, trying in order:
+     *  1. exact id — the common case: the portal's key (`tvg-id` /
+     *     `epg_channel_id`) IS the feed's `<channel id>`, e.g. `France2.fr`,
+     *  2. normalized id (case/accents/punctuation-insensitive id),
+     *  3. normalized display name — for portals whose EPG key is the channel
+     *     NAME instead of an id.
      */
     private fun resolveChannelId(feed: FeedCache, epgKey: String): String? {
-        val channelIds = feed.channels.keys
         // 1. Exact id match.
-        if (epgKey in channelIds) return epgKey
-        // 2. Case-insensitive id match.
-        val lower = epgKey.lowercase()
-        feed.channels.keys.firstOrNull { it.lowercase() == lower }?.let { return it }
-        // 3. Compact id match (strips dots/dashes/whitespace).
-        val compact = lower.replace(Regex("[^a-z0-9]"), "")
-        feed.channels.keys.firstOrNull {
-            it.lowercase().replace(Regex("[^a-z0-9]"), "") == compact
-        }?.let { return it }
-        // 4. Fallback: the portal's EPG key is often the channel NAME
-        // (Xtream epg_channel_id = stream name). Match against the feed's
-        // declared display names.
-        val compactKey = lower.replace(Regex("[^a-z0-9]"), "")
-        feed.channels.entries.firstOrNull { (_, name) ->
-            name.replace(Regex("[^a-z0-9]"), "").lowercase() == compactKey
-        }?.key?.let { return it }
+        if (epgKey in feed.channels) return epgKey
+
+        val normalizedKey = normalizeCompact(epgKey)
+        if (normalizedKey.isEmpty()) return null
+
+        // 2. Normalized id match.
+        feed.byNormId[normalizedKey]?.let { return it }
+
+        // 3. Normalized display-name match (the portal's EPG key is often the
+        // channel NAME rather than a feed id).
+        feed.byNormName[normalizedKey]?.let { return it }
+
         return null
+    }
+
+    /**
+     * Normalizes a channel id / name / EPG key for matching: lowercases,
+     * strips accents (NFD decomposition), removes everything non-alphanumeric
+     * (spaces, dots, dashes, plus, ampersand…).
+     */
+    private fun normalizeCompact(value: String): String {
+        val decomposed = Normalizer.normalize(value, Normalizer.Form.NFD)
+        return decomposed
+            .replace(Regex("\\p{InCombiningDiacriticalMarks}"), "")
+            .lowercase()
+            .replace(Regex("[^a-z0-9]"), "")
+    }
+
+    companion object {
+        private const val TAG = "EpgService"
+        private const val STALE_MS = 24 * 60 * 60_000L // 24 h
+
+        fun isStale(fetchedAt: Long): Boolean =
+            System.currentTimeMillis() - fetchedAt > STALE_MS
     }
 
     /** Drops the cache for a portal (e.g. when its EPG URL changes or it is deleted). */
