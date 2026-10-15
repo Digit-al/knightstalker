@@ -172,12 +172,44 @@ class EpgService(
     fun entriesFor(portalId: Long, epgKey: String?, day: String?): List<EpgEntry> {
         if (epgKey.isNullOrBlank()) return emptyList()
         val feed = cache[portalId] ?: return emptyList()
-        val resolved = resolveChannelId(feed, epgKey) ?: return emptyList()
+        // 1) Resolve through the declared channels / normalised indexes.
+        // 2) Fallback: the portal key is very often the feed's <programme>
+        //    channel attribute itself, which is indexed in `schedules`
+        //    independently of the declared <channel> elements (covers feeds
+        //    whose <channel> block the parser did not populate).
+        val resolved = resolveChannelId(feed, epgKey) ?: epgKey
         val entries = feed.schedules[resolved] ?: return emptyList()
         if (day == null) return entries
         val dayStart = dayStartEpoch(day) ?: return entries
         val dayEnd = dayStart + 86_400
         return entries.filter { it.endTime > dayStart && it.startTime < dayEnd }
+    }
+
+    /**
+     * Diagnostic for a channel's EPG key — used by the UI to show WHY a channel
+     * has no programmes instead of a generic "No program info".
+     */
+    fun diagnose(
+        portalId: Long,
+        epgKey: String?,
+        day: String?
+    ): String = when {
+        epgKey.isNullOrBlank() -> "clé EPG absente"
+        else -> {
+            val feed = cache[portalId]
+            if (feed == null) "feed non chargé" else {
+                val resolved = resolveChannelId(feed, epgKey) ?: epgKey
+                val entries = feed.schedules[resolved]
+                    ?: return "chaîne $epgKey absente du feed"
+                if (entries.isEmpty()) "0 prog pour $epgKey dans le feed"
+                else {
+                    val dayStart = day?.let { dayStartEpoch(it) }
+                    val todays = if (dayStart == null) entries.size
+                        else entries.count { it.endTime > dayStart && it.startTime < dayStart + 86_400 }
+                    "${entries.size} prog au total, $todays pour le jour demandé"
+                }
+            }
+        }
     }
 
     /**

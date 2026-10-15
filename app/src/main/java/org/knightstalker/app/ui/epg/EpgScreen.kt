@@ -132,7 +132,7 @@ fun EpgScreen(
 
                 LaunchedEffect(channel.id, state.selectedDate) {
                     if (channel.id !in state.epgData) {
-                        viewModel.loadEpgForChannel(channel.id)
+                        viewModel.loadEpgForChannel(channel)
                     }
                 }
 

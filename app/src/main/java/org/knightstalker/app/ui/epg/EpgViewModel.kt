@@ -136,17 +136,28 @@ class EpgViewModel(
      */
     private val pendingChannels = mutableSetOf<String>()
 
-    fun loadEpgForChannel(channelId: String) {
+    /**
+     * Loads the EPG entries for a single channel. Passes the already-resolved
+     * [Channel.epgKey] directly so we don't have to re-look it up in
+     * `authManager.xtreamStreams` (which can be empty on cold start or after
+     * a reconnection).
+     */
+    fun loadEpgForChannel(channel: Channel) {
         val portal = authManager.currentPortal ?: return
+        val channelId = channel.id
         if (channelId in _state.value.epgData) return
         if (channelId in pendingChannels) return
         pendingChannels += channelId
         viewModelScope.launch {
-            val result = epgRepository.getDayEpg(portal.url, channelId, _state.value.selectedDate)
+            val result = epgRepository.getDayEpg(
+                baseUrl = portal.url,
+                channelId = channelId,
+                day = _state.value.selectedDate,
+                epgKey = channel.epgKey
+            )
             result
                 .onSuccess { entries ->
-                    // Authoritative feed status, read directly from the service
-                    // (the state mirror is async and can lag behind).
+                    // Authoritative feed status from the service itself.
                     val feedReady = epgService?.status?.value?.let { !it.isLoading }
                         ?: _state.value.epgFeedLoading.not()
                     if (entries.isEmpty() && !feedReady) {
@@ -177,13 +188,20 @@ class EpgViewModel(
         if (toRetry.isEmpty()) return
         toRetry.forEach { pendingChannels -= it }
         toRetry.forEach { channelId ->
+            // Look up the Channel object for its already-resolved epgKey
+            // (avoids a re-lookup in xtreamStreams).
+            val channel = _state.value.channels.firstOrNull { it.id == channelId }
             viewModelScope.launch {
-                epgRepository.getDayEpg(portal.url, channelId, _state.value.selectedDate)
-                    .onSuccess { entries ->
-                        _state.update { state ->
-                            state.copy(epgData = state.epgData + (channelId to entries))
-                        }
+                epgRepository.getDayEpg(
+                    baseUrl = portal.url,
+                    channelId = channelId,
+                    day = _state.value.selectedDate,
+                    epgKey = channel?.epgKey
+                ).onSuccess { entries ->
+                    _state.update { state ->
+                        state.copy(epgData = state.epgData + (channelId to entries))
                     }
+                }
             }
         }
     }
@@ -212,8 +230,9 @@ class EpgViewModel(
         viewModelScope.launch {
             epgService?.ensureFeed(portal.id, force = true)
             _state.value.channels.forEach { ch ->
-                epgRepository.getDayEpg(portal.url, ch.id, _state.value.selectedDate)
-                    .onSuccess { entries ->
+                epgRepository.getDayEpg(
+                    portal.url, ch.id, _state.value.selectedDate, epgKey = ch.epgKey
+                ).onSuccess { entries ->
                         _state.update { s ->
                             s.copy(epgData = s.epgData + (ch.id to entries))
                         }

@@ -39,14 +39,24 @@ class EpgRepository(
      * Full day EPG for a channel.
      *  - STALKER: Stalker `get_simple_data_table`.
      *  - M3U / XTREAM: XMLTV feed via [EpgService] for the requested [day].
+     *
+     * When [epgKey] is provided (from the already-resolved [Channel.epgKey]),
+     * it is used directly — avoiding a re-lookup in `authManager.xtreamStreams`
+     * which can be empty on cold start or after a reconnection.
      */
-    suspend fun getDayEpg(baseUrl: String, channelId: String, day: String): Result<List<EpgEntry>> {
+    suspend fun getDayEpg(
+        baseUrl: String,
+        channelId: String,
+        day: String,
+        epgKey: String? = null
+    ): Result<List<EpgEntry>> {
         val type = authManager.currentPortal?.type ?: PortalType.STALKER
         return when (type) {
             PortalType.M3U, PortalType.XTREAM -> {
                 val portal = authManager.currentPortal ?: return Result.failure(Exception("No portal"))
                 epgService.ensureFeed(portal.id)
-                Result.success(epgService.entriesFor(portal.id, epgKeyFor(channelId), day))
+                val key = epgKey?.takeIf { it.isNotBlank() } ?: epgKeyFor(channelId)
+                Result.success(epgService.entriesFor(portal.id, key, day))
             }
             else -> api.getEpg(baseUrl, channelId, day).map { response ->
                 val data = response.js?.data ?: emptyList()
