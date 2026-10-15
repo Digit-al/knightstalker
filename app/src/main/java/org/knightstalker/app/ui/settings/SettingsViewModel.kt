@@ -31,6 +31,7 @@ data class SettingsState(
     val portalType: PortalType = PortalType.STALKER,
     val portalUsername: String = "",
     val portalPassword: String = "",
+    val portalEpgUrl: String = "",
     val isSaving: Boolean = false,
     val saveSuccess: Boolean = false,
     val importSuccess: Boolean = false,
@@ -95,7 +96,8 @@ class SettingsViewModel(
                         portalName = portal?.name ?: it.portalName,
                         portalType = portal?.type ?: it.portalType,
                         portalUsername = portal?.username ?: it.portalUsername,
-                        portalPassword = portal?.password ?: it.portalPassword
+                        portalPassword = portal?.password ?: it.portalPassword,
+                        portalEpgUrl = portal?.epgUrl ?: it.portalEpgUrl
                     )
                 }
             }
@@ -198,6 +200,10 @@ class SettingsViewModel(
         _state.update { it.copy(portalName = name, saveSuccess = false) }
     }
 
+    fun updatePortalEpgUrl(url: String) {
+        _state.update { it.copy(portalEpgUrl = url, saveSuccess = false) }
+    }
+
     fun saveAndReconnect() {
         val current = _state.value
         val portal = current.connectedPortal ?: return
@@ -228,7 +234,8 @@ class SettingsViewModel(
                 },
                 name = newName,
                 username = if (portal.type == PortalType.XTREAM) current.portalUsername.trim() else portal.username,
-                password = if (portal.type == PortalType.XTREAM) current.portalPassword else portal.password
+                password = if (portal.type == PortalType.XTREAM) current.portalPassword else portal.password,
+                epgUrl = current.portalEpgUrl.trim()
             )
             portalRepository.save(updated)
             authManager.disconnect()

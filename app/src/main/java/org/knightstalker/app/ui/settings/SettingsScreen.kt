@@ -284,6 +284,32 @@ fun SettingsScreen(
                     }
                 }
 
+                // Optional XMLTV EPG feed for this portal (all types).
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = state.portalEpgUrl,
+                    onValueChange = { viewModel.updatePortalEpgUrl(it) },
+                    label = { Text("EPG XMLTV URL (optional)") },
+                    placeholder = { Text("https://epg.example.com/feed.xml") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Accent,
+                        cursorColor = Accent
+                    ),
+                    supportingText = {
+                        Text(
+                            if (state.portalType == PortalType.STALKER)
+                                "Optional: overrides the portal EPG with this XMLTV feed"
+                            else
+                                "Programme guide for M3U / Xtream channels (XMLTV)",
+                            color = TextSecondary
+                        )
+                    }
+                )
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
