@@ -256,7 +256,7 @@ fun EpgScreen(
                     }
 
                     // Timeline — shared scroll state
-                    Box(
+                    Row(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
@@ -279,7 +279,7 @@ fun EpgScreen(
                                 )
                             }
 
-                            // Programme blocks
+                            // Programme blocks — positioned by start time
                             val sdf = SimpleDateFormat("HH:mm", Locale.US)
                             epgEntries.forEach { entry ->
                                 val entryStart = entry.startTime
@@ -338,6 +338,30 @@ fun EpgScreen(
                                             .width(2.dp)
                                             .fillMaxHeight()
                                             .background(Color(0xFFE53935))
+                                    )
+                                }
+                            }
+
+                            // Empty state — show a message when no programmes loaded yet
+                            if (epgEntries.isEmpty()) {
+                                val message = when {
+                                    state.epgFeedLoading -> "Chargement du guide…"
+                                    state.epgFeedError != null -> "Guide: ${state.epgFeedError}"
+                                    else -> {
+                                        val reason = state.epgDiagnose[channel.id]
+                                        if (reason != null) "No programme — $reason" else "No program info"
+                                    }
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 8.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    Text(
+                                        text = message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary
                                     )
                                 }
                             }
