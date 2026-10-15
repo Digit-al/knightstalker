@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import org.knightstalker.app.domain.model.Channel
 import org.knightstalker.app.domain.model.ChannelCategory
 import org.knightstalker.app.domain.model.EpgEntry
+import org.knightstalker.app.domain.model.PortalType
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -30,7 +31,13 @@ data class EpgState(
     val epgFeedLoading: Boolean = false,
     val epgFeedError: String? = null,
     val epgFeedChannels: Int = 0,
-    val epgFeedEntries: Int = 0
+    val epgFeedEntries: Int = 0,
+    // True when the current portal uses an XMLTV feed (M3U/Xtream), so the
+    // UI can show the feed status line even before it has loaded.
+    val epgFeedApplicable: Boolean = false,
+    // Per-channel reason shown when a channel has no programmes even though the
+    // feed is loaded (e.g. "chaîne ... absente du feed").
+    val epgDiagnose: Map<String, String> = emptyMap()
 )
 
 class EpgViewModel(
@@ -92,8 +99,11 @@ class EpgViewModel(
      */
     private fun loadChannels() {
         val portal = authManager.currentPortal ?: return
+        // M3U/Xtream portals resolve EPG through the XMLTV feed — remember that
+        // so the UI can always show the feed status line for these portals.
+        val feedApplicable = portal.type == PortalType.XTREAM || portal.type == PortalType.M3U
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, error = null) }
+            _state.update { it.copy(isLoading = true, error = null, epgFeedApplicable = feedApplicable) }
             try {
                 val allChannels = mutableListOf<Channel>()
                 var page = 1
@@ -167,8 +177,16 @@ class EpgViewModel(
                         return@launch
                     }
                     pendingChannels -= channelId
+                    // When the feed is loaded but the channel is empty, capture
+                    // the reason so the UI can show it instead of a blank row.
+                    val reason = if (entries.isEmpty()) {
+                        epgService?.diagnose(portal.id, channel.epgKey, _state.value.selectedDate)
+                    } else null
                     _state.update { state ->
-                        state.copy(epgData = state.epgData + (channelId to entries))
+                        state.copy(
+                            epgData = state.epgData + (channelId to entries),
+                            epgDiagnose = reason?.let { state.epgDiagnose + (channelId to it) } ?: state.epgDiagnose
+                        )
                     }
                 }
                 .onFailure {

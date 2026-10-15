@@ -193,23 +193,16 @@ class EpgService(
         portalId: Long,
         epgKey: String?,
         day: String?
-    ): String = when {
-        epgKey.isNullOrBlank() -> "clé EPG absente"
-        else -> {
-            val feed = cache[portalId]
-            if (feed == null) "feed non chargé" else {
-                val resolved = resolveChannelId(feed, epgKey) ?: epgKey
-                val entries = feed.schedules[resolved]
-                    ?: return "chaîne $epgKey absente du feed"
-                if (entries.isEmpty()) "0 prog pour $epgKey dans le feed"
-                else {
-                    val dayStart = day?.let { dayStartEpoch(it) }
-                    val todays = if (dayStart == null) entries.size
-                        else entries.count { it.endTime > dayStart && it.startTime < dayStart + 86_400 }
-                    "${entries.size} prog au total, $todays pour le jour demandé"
-                }
-            }
-        }
+    ): String {
+        if (epgKey.isNullOrBlank()) return "clé EPG absente"
+        val feed = cache[portalId] ?: return "feed non chargé"
+        val resolved = resolveChannelId(feed, epgKey) ?: epgKey
+        val entries = feed.schedules[resolved] ?: return "chaîne $epgKey absente du feed"
+        if (entries.isEmpty()) return "0 prog pour $epgKey dans le feed"
+        val dayStart = day?.let { dayStartEpoch(it) }
+        val todays = if (dayStart == null) entries.size
+            else entries.count { it.endTime > dayStart && it.startTime < dayStart + 86_400 }
+        return "${entries.size} prog au total, $todays pour le jour demandé"
     }
 
     /**

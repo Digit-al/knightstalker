@@ -81,10 +81,21 @@ fun EpgScreen(
             }
         }
 
-        // Guide status banner — shown while the XMLTV feed is downloading or
-        // when it failed, with a retry button. Without this, a 15 MB feed that
-        // is still downloading looks exactly like a portal with no EPG.
-        if (state.epgFeedLoading || state.epgFeedError != null) {
+        // Guide status banner — always shown for XMLTV-feed portals (M3U/Xtream)
+        // so you can see exactly what happened with the feed: loading, an
+        // error, or the number of channels/programmes it parsed. A feed that
+        // fails to load looks identical to a portal with no EPG otherwise.
+        if (state.epgFeedApplicable) {
+            val feedText = when {
+                state.epgFeedLoading -> "Chargement du guide…"
+                state.epgFeedError != null -> "Guide: ${state.epgFeedError}"
+                else -> "Guide: ${state.epgFeedChannels} chaînes, ${state.epgFeedEntries} programmes"
+            }
+            val feedColor = when {
+                state.epgFeedLoading -> TextSecondary
+                state.epgFeedError != null -> WarningOrange
+                else -> TextSecondary
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -94,8 +105,8 @@ fun EpgScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = if (state.epgFeedLoading) "Chargement du guide…" else (state.epgFeedError ?: "Guide indisponible"),
-                    color = if (state.epgFeedLoading) TextSecondary else WarningOrange,
+                    text = feedText,
+                    color = feedColor,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f)
                 )
@@ -167,14 +178,18 @@ fun EpgScreen(
                             .horizontalScroll(horizontalScroll)
                     ) {
                         if (epgEntries.isEmpty()) {
-                            // Distinguish "guide still loading", "guide failed" and
-                            // "genuinely no programmes" — otherwise a feed that
-                            // is still downloading looks identical to a channel
-                            // that has no EPG.
+                            // Distinguish "guide still loading", "guide failed",
+                            // "genuinely no programmes" and WHY a channel has no
+                            // programmes once the feed is loaded — otherwise a
+                            // feed that is still downloading looks identical to
+                            // a channel that has no EPG.
                             val message = when {
                                 state.epgFeedLoading -> "Chargement du guide…"
                                 state.epgFeedError != null -> "Guide: ${state.epgFeedError}"
-                                else -> "No program info"
+                                else -> {
+                                    val reason = state.epgDiagnose[channel.id]
+                                    if (reason != null) "No programme — $reason" else "No program info"
+                                }
                             }
                             Box(
                                 modifier = Modifier
