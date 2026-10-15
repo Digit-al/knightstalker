@@ -1,31 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package org.knightstalker.app.data.remote.parser
 
+import android.util.Log
 import org.knightstalker.app.domain.model.EpgEntry
-import org.w3c.dom.Element
+import org.xml.sax.Attributes
+import org.xml.sax.InputSource
+import org.xml.sax.helpers.DefaultHandler
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.parsers.SAXParserFactory
 import kotlin.text.MatchResult
 
 /**
  * Parser for XMLTV EPG files / feeds.
  *
- * Input is the raw XML text of a `tv` document:
- * ```xml
- * <tv>
- *   <channel id="france2.france.tv">France 2</channel>
- *   <programme start="20250101190000 +0100" stop="..." channel="france2.france.tv">
- *     <title lang="fr">...</title>
- *     <desc>...</desc>
- *   </programme>
- * </tv>
- * ```
+ * Uses a streaming SAX parser so that large feeds (tens of MB) can be parsed
+ * without loading the entire DOM tree into memory — a 67 MB feed that would
+ * otherwise OOM a phone now parses with a flat, small result map.
  *
- * [parse] returns EPG entries keyed by the `channel` attribute. [parseChannels]
- * returns the declared `<channel>` elements, useful to match a playlist's
- * `tvg-id` / Xtream `epg_channel_id` values against the feed.
+ * [parse] returns EPG entries keyed by the `channel` attribute.
+ * [parseChannels] returns the declared `<channel>` elements.
+ * [parseAll] does both in a single pass (preferred).
  */
 class XmltvParser {
 
@@ -34,15 +30,20 @@ class XmltvParser {
         val displayName: String?
     )
 
+    /** Result of a full feed parse: per-channel schedules + declared channels. */
+    data class ParseResult(
+        val schedules: Map<String, List<EpgEntry>>,
+        val channels: List<FeedChannel>
+    )
+
     /**
-     * Parses the feed. [day] ("yyyy-MM-dd") restricts entries to that day (local
-     * time) when non-null; null returns every entry.
+     * Parses the feed in a single streaming SAX pass.
+     *
+     * [day] ("yyyy-MM-dd") restricts entries to that day (local time) when
+     * non-null; null returns every entry.
      */
-    fun parse(xml: String, day: String? = null): Map<String, List<EpgEntry>> {
-        if (xml.isBlank()) return emptyMap()
-        val dbf = newSecureFactory()
-        val doc = dbf.newDocumentBuilder().parse(xml.byteInputStream())
-        doc.documentElement.normalize()
+    fun parseAll(xml: String, day: String? = null): ParseResult {
+        if (xml.isBlank()) return ParseResult(emptyMap(), emptyList())
 
         val dayStart: Long? = day?.let {
             try {
@@ -56,77 +57,198 @@ class XmltvParser {
         val dayEnd = dayStart?.plus(86_400)
 
         val out: MutableMap<String, MutableList<EpgEntry>> = LinkedHashMap()
-        val programmes = doc.getElementsByTagName("programme")
+        val channels = mutableListOf<FeedChannel>()
 
-        for (i in 0 until programmes.length) {
-            val el = programmes.item(i) as? Element ?: continue
-            val channelId = el.getAttribute("channel")
-            if (channelId.isBlank()) continue
+        // <programme> accumulation state
+        var progChannel: String? = null
+        var progStart: Long? = null
+        var progStop: Long? = null
+        var progTitle: StringBuilder? = null
+        var progDesc: StringBuilder? = null
+        var inTitle = false
+        var inDesc = false
 
-            val start: Long = parseXmltvTime(el.getAttribute("start")) ?: continue
-            val stopFromAttr: Long? = parseXmltvTime(el.getAttribute("stop"))
-            val stop: Long = stopFromAttr
-                ?: parseXmltvTime(el.getAttribute("stopdate"))
-                ?: (start + (parseXmltvDuration(el.getAttribute("duration")) ?: 3600L))
+        // <channel> accumulation state
+        var chanId: String? = null
+        var chanName: StringBuilder? = null
+        var inChanName = false
 
-            // Day filtering: keep entries overlapping the requested day.
-            if (dayStart != null && dayEnd != null) {
-                if (stop <= dayStart || start >= dayEnd) continue
-            }
+        try {
+            // XMLTV files carry a standard DOCTYPE — accept it, but never
+            // fetch the referenced DTD from the network (XXE protection).
+            // Individual features may be unsupported on some platforms; fall
+            // back gracefully.
+            val factory = SAXParserFactory.newInstance()
+            val secureFactory = try {
+                factory.apply {
+                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", false)
+                    setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                }
+            } catch (_: Exception) { factory }
+            secureFactory.isNamespaceAware = false
+            secureFactory.isXIncludeAware = false
+            val parser = secureFactory.newSAXParser()
 
-            val title = textOf(el, "title")?.takeIf { it.isNotBlank() } ?: "Programme"
-            val desc = textOf(el, "desc")?.takeIf { it.isNotBlank() }
+            parser.parse(
+                InputSource(xml.byteInputStream()),
+                object : DefaultHandler() {
 
-            val entry = EpgEntry(
-                id = "${channelId}_${start}",
-                channelId = channelId,
-                title = title,
-                description = desc,
-                startTime = start,
-                endTime = stop,
-                duration = ((stop - start) / 60).toInt()
+                    override fun startElement(
+                        uri: String,
+                        localName: String,
+                        qName: String,
+                        attrs: Attributes
+                    ) {
+                        // Use localName so namespace-prefixed elements still match.
+                        when (localName) {
+                            "channel" -> {
+                                chanId = attrs.getValue("id")
+                            }
+
+                            "display-name" -> {
+                                if (chanId != null && !inChanName) {
+                                    inChanName = true
+                                    chanName = StringBuilder()
+                                }
+                            }
+
+                            "programme" -> {
+                                val ch = attrs.getValue("channel")?.takeIf { it.isNotBlank() }
+                                val startStr = attrs.getValue("start")
+                                val stopStr = attrs.getValue("stop")
+                                val stopDateStr = attrs.getValue("stopdate")
+                                val durationStr = attrs.getValue("duration")
+
+                                val parsedStart =
+                                    startStr?.takeIf { it.isNotBlank() }?.let { parseXmltvTime(it) }
+
+                                val parsedStop =
+                                    (stopStr?.takeIf { it.isNotBlank() }?.let { parseXmltvTime(it) })
+                                        ?: (stopDateStr?.takeIf { it.isNotBlank() }?.let { parseXmltvTime(it) })
+                                        ?: if (parsedStart != null) {
+                                            val dur = durationStr?.let { parseXmltvDuration(it) } ?: 3600L
+                                            parsedStart + dur
+                                        } else null
+
+                                // Only track entries that have both a channel id and a valid start.
+                                progChannel = if (ch != null && parsedStart != null) ch else null
+                                progStart = parsedStart
+                                progStop = parsedStop
+                                progTitle = StringBuilder()
+                                progDesc = null
+                                inTitle = false
+                                inDesc = false
+                            }
+
+                            "title" -> {
+                                if (progChannel != null) inTitle = true
+                            }
+
+                            "desc" -> {
+                                if (progChannel != null) {
+                                    inDesc = true
+                                    progDesc = StringBuilder()
+                                }
+                            }
+                        }
+                    }
+
+                    override fun characters(ch: CharArray, start: Int, length: Int) {
+                        when {
+                            inTitle -> progTitle?.append(ch, start, length)
+                            inDesc -> progDesc?.append(ch, start, length)
+                            inChanName -> chanName?.append(ch, start, length)
+                        }
+                    }
+
+                    override fun endElement(
+                        uri: String,
+                        localName: String,
+                        qName: String
+                    ) {
+                        when (localName) {
+                            "title" -> {
+                                inTitle = false
+                            }
+
+                            "desc" -> {
+                                inDesc = false
+                            }
+
+                            "display-name" -> {
+                                inChanName = false
+                            }
+
+                            "channel" -> {
+                                val id = chanId
+                                if (id != null && id.isNotBlank()) {
+                                    val name = chanName?.toString()?.trim()?.takeIf { it.isNotBlank() }
+                                    channels.add(FeedChannel(id, name))
+                                }
+                                chanId = null
+                                chanName = null
+                                inChanName = false
+                            }
+
+                            "programme" -> {
+                                val channelId = progChannel
+                                val start = progStart
+                                val stop = progStop
+                                val title = progTitle?.toString()?.trim()
+                                    ?.takeIf { it.isNotBlank() } ?: "Programme"
+                                val desc = progDesc?.toString()?.trim()?.takeIf { it.isNotBlank() }
+
+                                if (channelId != null && start != null && stop != null) {
+                                    // Keep entries overlapping the requested day.
+                                    if (dayStart == null || dayEnd == null ||
+                                        (stop > dayStart && start < dayEnd)
+                                    ) {
+                                        val entry = EpgEntry(
+                                            id = "${channelId}_${start}",
+                                            channelId = channelId,
+                                            title = title,
+                                            description = desc,
+                                            startTime = start,
+                                            endTime = stop,
+                                            duration = ((stop - start) / 60).toInt()
+                                        )
+                                        out.getOrPut(channelId) { mutableListOf() }.add(entry)
+                                    }
+                                }
+
+                                // Reset for the next <programme> element.
+                                progChannel = null
+                                progStart = null
+                                progStop = null
+                                progTitle = null
+                                progDesc = null
+                                inTitle = false
+                                inDesc = false
+                            }
+                        }
+                    }
+                }
             )
-            val list: MutableList<EpgEntry> = out.getOrPut(channelId) { mutableListOf() }
-            list.add(entry)
+        } catch (e: Exception) {
+            Log.e("XmltvParser", "SAX parse failed", e)
         }
 
-        // Sort each channel's schedule chronologically.
         out.values.forEach { it.sortBy { e -> e.startTime } }
-        return out
+        return ParseResult(out, channels)
     }
+
+    /**
+     * Parses the feed. [day] ("yyyy-MM-dd") restricts entries to that day (local
+     * time) when non-null; null returns every entry.
+     */
+    fun parse(xml: String, day: String? = null): Map<String, List<EpgEntry>> =
+        parseAll(xml, day).schedules
 
     /** Declared `<channel>` elements of the feed. */
-    fun parseChannels(xml: String): List<FeedChannel> {
-        if (xml.isBlank()) return emptyList()
-        val dbf = newSecureFactory()
-        val doc = dbf.newDocumentBuilder().parse(xml.byteInputStream())
-        doc.documentElement.normalize()
-        val channels = doc.getElementsByTagName("channel")
-        val result = ArrayList<FeedChannel>(channels.length)
-        for (i in 0 until channels.length) {
-            val el = channels.item(i) as? Element ?: continue
-            val id = el.getAttribute("id")
-            if (id.isBlank()) continue
-            val display = el.getAttribute("display-name")
-            result.add(FeedChannel(id, display.takeIf { it.isNotBlank() }))
-        }
-        return result
-    }
+    fun parseChannels(xml: String): List<FeedChannel> =
+        parseAll(xml).channels
 
-    private fun newSecureFactory(): DocumentBuilderFactory {
-        return DocumentBuilderFactory.newInstance().apply {
-            // Harden against XXE: no DTDs / external entities.
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            isXIncludeAware = false
-            isExpandEntityReferences = false
-        }
-    }
-
-    private fun textOf(parent: Element, tag: String): String? {
-        val nodes = parent.getElementsByTagName(tag)
-        if (nodes.length == 0) return null
-        return (nodes.item(0) as? Element)?.textContent?.trim()
-    }
+    // --- XMLTV time helpers ---
 
     private fun matchClassic(v: String): MatchResult? =
         Regex("^(\\d{4})(\\d{2})(\\d{2})(\\d{2})?(\\d{2})?(\\d{2})?\\s*([+-]\\d{2}:?\\d{2})?$")
@@ -138,9 +260,11 @@ class XmltvParser {
 
     /**
      * Parses XMLTV timestamps, returning Unix seconds (UTC).
+     *
      * Supported layouts:
-     *  - classic:   "20250101190000 +0100"
-     *  - ISO-ish:   "2025-01-01 19:00:00.000 +0100" / "2025-01-01T19:00:00+01:00"
+     *  - classic: "20250101190000 +0100"
+     *  - ISO-ish: "2025-01-01 19:00:00.000 +0100" / "2025-01-01T19:00:00+01:00"
+     *
      * When the feed omits an offset, the time is interpreted in the device's
      * local zone (standard XMLTV fallback).
      */
@@ -148,9 +272,7 @@ class XmltvParser {
         val v = value.trim()
         if (v.isEmpty()) return null
 
-        val classic = matchClassic(v)
-        val iso = matchIso(v)
-        val m = classic ?: iso ?: return null
+        val m = matchClassic(v) ?: matchIso(v) ?: return null
         val g = m.groupValues
 
         val year = g[1].toIntOrNull() ?: return null

@@ -105,9 +105,10 @@ class EpgService(
                 }
                 if (xml.isBlank()) throw Exception("Empty EPG feed")
 
-                val schedules = parser.parse(xml, day = null)
-                val channels = parser.parseChannels(xml)
-                val channelIds = channels.map { it.id }.toSet()
+                // Single streaming SAX pass — avoids parsing the 67 MB XML twice.
+                val result = parser.parseAll(xml, day = null)
+                val schedules = result.schedules
+                val channelIds = result.channels.map { it.id }.toSet()
 
                 // Entries may reference channels that were never declared — keep them.
                 val allIds = (channelIds + schedules.keys).toSet()
