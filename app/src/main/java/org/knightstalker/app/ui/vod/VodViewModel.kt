@@ -51,7 +51,7 @@ data class VodState(
     val selectedVod: VodItem? = null,
     val favoriteCategoryIds: Set<String> = emptySet(),
     val searchQuery: String = "",
-    val sortBy: VodSort = VodSort.Rating,
+    val sortBy: VodSort = VodSort.Added,
     val syncStatus: String = "IDLE",   // IDLE | CRAWLING | DELTA | ERROR
     val itemsIndexed: Int = 0,
     val totalItemsRemote: Int = 0,
