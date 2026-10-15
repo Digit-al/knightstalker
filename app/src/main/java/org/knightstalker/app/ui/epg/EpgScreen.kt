@@ -9,6 +9,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -37,6 +42,13 @@ fun EpgScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // Category selector — filters which channels are shown below.
+        CategoryRow(
+            categories = state.categories,
+            selected = state.selectedCategory,
+            onSelect = { viewModel.selectCategory(it) }
+        )
+
         // Date selector
         Row(
             modifier = Modifier
@@ -69,14 +81,25 @@ fun EpgScreen(
             }
         }
 
-        // EPG grid
-        LazyColumn(
-            modifier = Modifier.fillMaxSize()
-        ) {
+        if (state.channels.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = state.error ?: "No channels found",
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+
+        // EPG grid — one row per channel in the selected category.
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(state.channels, key = { it.id }) { channel ->
                 val epgEntries = state.epgData[channel.id] ?: emptyList()
 
-                LaunchedEffect(channel.id) {
+                LaunchedEffect(channel.id, state.selectedDate) {
                     if (channel.id !in state.epgData) {
                         viewModel.loadEpgForChannel(channel.id)
                     }
@@ -134,6 +157,72 @@ fun EpgScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Full-width category chip row with a dropdown to pick the active category.
+ * `selected == null` means "All".
+ */
+@Composable
+private fun CategoryRow(
+    categories: List<org.knightstalker.app.domain.model.ChannelCategory>,
+    selected: String?,
+    onSelect: (String?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = (categories.firstOrNull { it.id == selected }?.title) ?: "All categories"
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DarkSurface)
+            .padding(horizontal = 16.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { expanded = true }
+                .padding(vertical = 10.dp, horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Category: $label",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextPrimary
+            )
+            Spacer(Modifier.weight(1f))
+            Icon(
+                imageVector = Icons.Filled.ArrowDropDown,
+                contentDescription = null,
+                tint = TextSecondary
+            )
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(max = 320.dp)
+        ) {
+            DropdownMenuItem(
+                text = { Text("All categories") },
+                onClick = {
+                    expanded = false
+                    if (selected != null) onSelect(null)
+                }
+            )
+            categories.forEach { cat ->
+                if (cat.id == "*") return@forEach
+                DropdownMenuItem(
+                    text = { Text(cat.title) },
+                    onClick = {
+                        expanded = false
+                        onSelect(cat.id)
+                    }
+                )
             }
         }
     }

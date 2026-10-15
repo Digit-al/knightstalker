@@ -21,8 +21,8 @@ android {
         applicationId = "org.knightstalker.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.3.6"
+        versionCode = 11
+        versionName = "1.3.7"
 
         // Optional TMDB API key for enriching VOD details (synopsis, cast, genre,
         // duration, release date). Empty -> enrichment silently skipped.
