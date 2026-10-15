@@ -29,6 +29,7 @@ import org.knightstalker.app.data.repository.DownloadRepository
 import org.knightstalker.app.data.repository.DownloadStatus
 import org.knightstalker.app.data.repository.VodRepository
 import org.knightstalker.app.data.repository.WatchHistoryRepository
+import org.knightstalker.app.domain.model.EpisodeRef
 
 data class PlayerState(
     val isPlaying: Boolean = false,
@@ -91,6 +92,11 @@ class PlayerViewModel(
     private var currentEpisode: Int = 0
     private var currentEpisodes: List<Int> = emptyList()
     private var currentSeriesName: String = ""
+    // Bare season cmd for the playing episode (currentCmd carries the full episode
+    // descriptor for history resume, so it must not be reused here).
+    private var currentSeasonCmd: String = ""
+    // Stream ref of the currently playing episode (Xtream per-episode id + ext).
+    private var currentEpisodeRef: EpisodeRef? = null
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
         // IPTV content servers stall mid-stream; the defaults (8s timeout, few
@@ -310,23 +316,38 @@ class PlayerViewModel(
 
     /** Play a single series episode, resolved from its season cmd + episode number.
      *  [episodes] is the season's full episode list, used to offer the next one. */
-    fun playEpisode(seasonCmd: String, episode: Int, name: String = "", episodes: List<Int> = emptyList()) {
+    fun playEpisode(
+        seasonCmd: String,
+        episode: Int,
+        name: String = "",
+        episodes: List<Int> = emptyList(),
+        episodeRef: EpisodeRef? = null,
+        episodeTitle: String? = null
+    ) {
         val portal = authManager.currentPortal ?: return
         currentItemId = "episode:$seasonCmd:$episode"
-        currentCmd = seasonCmd
-        currentType = "vod"
+        // Self-contained cmd so this episode can be resumed from history without
+        // relying on the in-memory episode ref cache ("<seasonCmd>|<ep>|<eps>|<epId>|<ext>").
+        currentCmd = "$seasonCmd|$episode|${episodes.joinToString(",")}|${episodeRef?.episodeId.orEmpty()}|${episodeRef?.ext.orEmpty()}"
+        currentType = "episode"
         currentPortalId = portal.id
         currentLogo = null
         currentEpisode = episode
         if (episodes.isNotEmpty()) currentEpisodes = episodes
+        currentSeasonCmd = seasonCmd
+        currentEpisodeRef = episodeRef
         if (name.isNotBlank()) currentSeriesName = name
-        val title = if (currentSeriesName.isBlank()) "Episode $episode" else "$currentSeriesName • Ep $episode"
+        val title = when {
+            episodeTitle.isNullOrBlank() ->
+                if (currentSeriesName.isBlank()) "Episode $episode" else "$currentSeriesName • Ep $episode"
+            else -> "$currentSeriesName • $episodeTitle"
+        }
         _state.update {
             it.copy(channelName = title, error = null, isBuffering = true, showNextEpisodePrompt = false, nextEpisodeNumber = null)
         }
 
         viewModelScope.launch {
-            vodRepository.createEpisodeLink(portal.url, seasonCmd, episode)
+            vodRepository.createEpisodeLink(portal.url, seasonCmd, episode, episodeRef)
                 .onSuccess { url ->
                     _state.update { it.copy(currentStreamUrl = url) }
                     val history = watchHistoryRepository.getEntry(currentItemId, currentPortalId)
@@ -359,8 +380,12 @@ class PlayerViewModel(
 
     fun playNextEpisode() {
         val next = _state.value.nextEpisodeNumber ?: return
-        playEpisode(currentCmd, next, currentSeriesName, currentEpisodes)
+        // The per-episode stream id is resolved by the repository (its cache is
+        // populated when the season's episodes were loaded).
+        val ref = vodRepository.getEpisodeRef(currentSeasonCmd, next)
+        playEpisode(currentSeasonCmd, next, currentSeriesName, currentEpisodes, ref)
     }
+
 
     fun dismissNextEpisode() {
         _state.update { it.copy(showNextEpisodePrompt = false) }

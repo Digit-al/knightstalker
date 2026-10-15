@@ -342,11 +342,14 @@ private fun HomeScreen(
                         onPlayVod = { _, _, _ -> },
                         onOpenDownloads = { goToTab("downloads") },
                         isSeries = true,
-                        onPlayEpisode = { seasonCmd, episode, episodes, seriesName ->
+                        onPlayEpisode = { seasonCmd, episode, episodes, seriesName, epId, epExt, _ ->
+                            val epsCsv = episodes.joinToString(",")
+                            // Episode stream id + container ext ride in the cmd so the player
+                            // does not depend on the in-memory episode ref cache.
                             navController.navigate(
                                 NavRoute.Player.createRoute(
                                     "episode",
-                                    "$seasonCmd|$episode|${episodes.joinToString(",")}",
+                                    "$seasonCmd|$episode|$epsCsv|${epId.orEmpty()}|${epExt.orEmpty()}",
                                     seriesName
                                 )
                             )

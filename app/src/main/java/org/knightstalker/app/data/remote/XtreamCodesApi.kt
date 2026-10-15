@@ -144,6 +144,42 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
         )
     }
 
+    @Serializable
+    data class XtreamSeasonMeta(
+        val id: String = "",
+        val name: String = "",
+        val season_number: String = "",
+        val episode_count: String = "",
+        val air_date: String = "",
+        val cover: String = "",
+        val cover_big: String = "",
+        val overview: String = ""
+    ) {
+        /** Numeric season key used to correlate with the `episodes` map. */
+        val seasonKey: String
+            get() = season_number.ifBlank { id }.ifBlank { "" }
+    }
+
+    @Serializable
+    data class XtreamSeriesInfoBlock(
+        val name: String = "",
+        val cover: String = "",
+        val cover_big: String = ""
+    )
+
+    /**
+     * Parsed result of `get_series_info`. The authoritative episode list lives in
+     * [episodes] (a map of season-number -> episodes), matching the standard
+     * Xtream Codes `player_api` contract. Some series omit it (then [episodes]
+     * is empty); callers must fall back gracefully.
+     */
+    @Serializable
+    data class XtreamSeriesInfo(
+        val seasons: List<XtreamSeasonMeta> = emptyList(),
+        val info: XtreamSeriesInfoBlock? = null,
+        val episodes: Map<String, List<Episode>> = emptyMap()
+    )
+
     // ------------------------------------------------------------- helpers
 
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
@@ -325,6 +361,28 @@ class XtreamCodesApi(private val client: OkHttpClient, private val json: Json) {
             val url = api(baseUrl, username, password, action = "get_series_info", extra = mapOf("series_id" to seriesId))
             val body = get(url)
             Result.success(kotlinx.serialization.json.Json.parseToJsonElement(body))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * `get_series_info` decoded straight into [XtreamSeriesInfo] (seasons metadata,
+     * info block, and the season-number -> episodes map). Uses the shared `json`
+     * instance (ignoreUnknownKeys + coerceInputValues) so the extra fields the
+     * panel emits per episode (`custom_sid`, `added`, `direct_source`, …) are
+     * tolerated and the `info` block (a nested object) coerces safely.
+     */
+    suspend fun getSeriesInfoParsed(
+        baseUrl: String,
+        username: String,
+        password: String,
+        seriesId: String
+    ): Result<XtreamSeriesInfo> {
+        return try {
+            val url = api(baseUrl, username, password, action = "get_series_info", extra = mapOf("series_id" to seriesId))
+            val body = get(url)
+            Result.success(json.decodeFromString(XtreamSeriesInfo.serializer(), body))
         } catch (e: Exception) {
             Result.failure(e)
         }

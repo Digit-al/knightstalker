@@ -169,7 +169,11 @@ private fun HistoryItem(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            if (entry.type == "itv") Icons.Default.LiveTv else Icons.Default.Movie,
+                            when (entry.type) {
+                                "itv" -> Icons.Default.LiveTv
+                                "episode" -> Icons.Default.Tv
+                                else -> Icons.Default.Movie
+                            },
                             contentDescription = null,
                             tint = TextSecondary,
                             modifier = Modifier.size(28.dp)
@@ -207,7 +211,11 @@ private fun HistoryItem(
                 ) {
                     // Type badge
                     Text(
-                        text = if (entry.type == "itv") "Live TV" else "Movie",
+                        text = when (entry.type) {
+                            "itv" -> "Live TV"
+                            "episode" -> "Episode"
+                            else -> "Movie"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary
                     )

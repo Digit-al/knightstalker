@@ -29,7 +29,7 @@ fun VodScreen(
     onPlayVod: (cmd: String, name: String, ext: String) -> Unit,
     onOpenDownloads: () -> Unit = {},
     isSeries: Boolean = false,
-    onPlayEpisode: (seasonCmd: String, episode: Int, episodes: List<Int>, seriesName: String) -> Unit = { _, _, _, _ -> }
+    onPlayEpisode: (seasonCmd: String, episode: Int, episodes: List<Int>, seriesName: String, episodeId: String?, episodeExt: String?, episodeTitle: String?) -> Unit = { _, _, _, _, _, _, _ -> }
 ) {
     val state by viewModel.state.collectAsState()
     val gridState = rememberLazyGridState()
@@ -47,7 +47,7 @@ fun VodScreen(
                 error = state.seasonsError,
                 episodeProgress = state.episodeProgress,
                 nextEpisode = state.nextEpisode,
-                onPlay = { seasonCmd, ep, eps -> onPlayEpisode(seasonCmd, ep, eps, vod.name) },
+                onPlay = { seasonCmd, ep, eps, epId, epExt, epTitle -> onPlayEpisode(seasonCmd, ep, eps, vod.name, epId, epExt, epTitle) },
                 onDismiss = { viewModel.selectVod(null) }
             )
         } else {

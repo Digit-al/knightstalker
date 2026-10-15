@@ -7,6 +7,7 @@ import org.knightstalker.app.data.remote.StalkerAuthManager
 import org.knightstalker.app.data.remote.XtreamCodesApi
 import org.knightstalker.app.data.remote.dto.VodCategoryData
 import org.knightstalker.app.data.remote.dto.VodData
+import org.knightstalker.app.domain.model.EpisodeRef
 import org.knightstalker.app.domain.model.PortalType
 import org.knightstalker.app.domain.model.Season
 import org.knightstalker.app.domain.model.VodCategory
@@ -203,19 +204,69 @@ class VodRepository(
         }
     }
 
+    /**
+     * Last-resort per-episode stream refs for Xtream (seriesId -> episodeNum -> ref),
+     * populated by [getSeriesSeasons]. Used to re-resolve an episode after the user
+     * navigates away and back (the player route only carries the episode number).
+     */
+    private val xtreamEpisodeRefCache = HashMap<String, HashMap<Int, EpisodeRef>>()
+
     suspend fun getSeriesSeasons(baseUrl: String, seriesId: String): Result<List<Season>> {
         return when (portalType()) {
-            // For Xtream, we don't have the episode list from the server's get_series_info.
-            // Return an empty list — the UI will show "No episodes available" gracefully.
             PortalType.XTREAM -> {
                 val portal = xtreamPortal()
                 try {
-                    val result = xtreamApi.getSeriesInfo(portal.url, portal.username, portal.password, seriesId)
-                    result.onFailure { return Result.failure(it) }
-                    val info = result.getOrThrow()
-                    // The server returns a "seasons" list with metadata but no episodes.
-                    // We return an empty list so the UI shows the series detail without episodes.
-                    Result.success(emptyList())
+                    val info = xtreamApi.getSeriesInfoParsed(portal.url, portal.username, portal.password, seriesId)
+                        .getOrElse { throw it }
+
+                    val episodesBySeason = info.episodes
+
+                    // 1) Seasons that own at least one episode (the `episodes` map is
+                    //    authoritative — some series omit it entirely).
+                    val seasons = episodesBySeason.keys.mapNotNull { seasonKey ->
+                        val eps = episodesBySeason[seasonKey].orEmpty()
+                            .mapNotNull { e ->
+                                val num = e.episode_num.toIntOrNull() ?: return@mapNotNull null
+                                val ext = e.extension.ifBlank { "mp4" }
+                                val ref = EpisodeRef(episodeId = e.id, ext = ext, title = e.title)
+                                xtreamEpisodeRefCache
+                                    .getOrPut(seriesId) { HashMap() }
+                                    .put(num, ref)
+                                num to ref
+                            }.toMap()
+                        if (eps.isEmpty()) return@mapNotNull null
+                        val seasonNum = seasonKey.toIntOrNull() ?: 0
+                        val poster = info.info?.cover?.takeIf { it.isNotBlank() }
+                        Season(
+                            id = seasonKey,
+                            name = "Season $seasonNum",
+                            cmd = seriesId,
+                            episodes = eps.keys.sorted(),
+                            poster = poster,
+                            episodeStreams = eps
+                        )
+                    }
+
+                    // 2) Merge in seasons that have metadata but no episodes yet
+                    //    (e.g. the server listed a season with episode_count but no
+                    //    episode rows) so the user still sees the season tab.
+                    val known = seasons.map { it.id }.toSet()
+                    val missing = info.seasons
+                        .filter { it.seasonKey.isNotBlank() && it.seasonKey !in known }
+                        .map { s ->
+                            val count = s.episode_count.toIntOrNull() ?: 0
+                            Season(
+                                id = s.seasonKey,
+                                name = s.name.ifBlank { "Season ${s.seasonKey.toIntOrNull() ?: 0}" },
+                                cmd = seriesId,
+                                episodes = if (count > 0) (1..count).toList() else emptyList(),
+                                poster = s.cover.takeIf { it.isNotBlank() },
+                                episodeStreams = emptyMap()
+                            )
+                        }
+
+                    val all = (seasons + missing).sortedBy { it.id.toIntOrNull() ?: 0 }
+                    Result.success(all)
                 } catch (e: Exception) {
                     Result.failure(e)
                 }
@@ -235,11 +286,25 @@ class VodRepository(
         }
     }
 
-    suspend fun createEpisodeLink(baseUrl: String, seasonCmd: String, episode: Int): Result<String> {
+    /** Look up a previously crawled episode stream ref (Xtream), or null. */
+    fun getEpisodeRef(seasonCmd: String, episode: Int): EpisodeRef? =
+        xtreamEpisodeRefCache[seasonCmd]?.get(episode)
+
+    suspend fun createEpisodeLink(
+        baseUrl: String,
+        seasonCmd: String,
+        episode: Int,
+        episodeRef: EpisodeRef? = null
+    ): Result<String> {
         return when (portalType()) {
             PortalType.XTREAM -> {
                 val portal = xtreamPortal()
-                Result.success(xtreamApi.buildSeriesUrl(portal.url, portal.username, portal.password, seasonCmd))
+                // Resolve the real per-episode stream id: prefer the explicit ref
+                // (from the detail screen), fall back to the last crawl result.
+                val ref = episodeRef
+                    ?: xtreamEpisodeRefCache[seasonCmd]?.get(episode)
+                    ?: return Result.failure(Exception("Episode stream id unknown — open the series and retry"))
+                Result.success(xtreamApi.buildSeriesUrl(portal.url, portal.username, portal.password, ref.episodeId, ref.ext))
             }
             PortalType.M3U -> Result.success(seasonCmd)
             else -> api.createLink(baseUrl, seasonCmd, type = "vod", series = episode).map { response ->

@@ -374,10 +374,10 @@ class VodViewModel(
             for (ep in season.episodes.sorted()) {
                 val p = progress[season.cmd]?.get(ep)
                 if (p != null && !p.finished && p.fraction > 0.02f) {
-                    return NextEpisode(si, season.cmd, ep, season.episodes, "Resume $seasonLabel E$ep", resume = true)
+                    return NextEpisode(si, season.cmd, ep, season.episodes, "Resume $seasonLabel E$ep", resume = true, episodeRef = season.episodeStreams[ep])
                 }
                 if (firstUnwatched == null && (p == null || !p.finished)) {
-                    firstUnwatched = NextEpisode(si, season.cmd, ep, season.episodes, "Play $seasonLabel E$ep", resume = false)
+                    firstUnwatched = NextEpisode(si, season.cmd, ep, season.episodes, "Play $seasonLabel E$ep", resume = false, episodeRef = season.episodeStreams[ep])
                 }
             }
         }

@@ -38,7 +38,7 @@ fun SeriesDetailScreen(
     error: String?,
     episodeProgress: Map<String, Map<Int, EpisodeProgress>>,
     nextEpisode: NextEpisode?,
-    onPlay: (seasonCmd: String, episode: Int, episodes: List<Int>) -> Unit,
+    onPlay: (seasonCmd: String, episode: Int, episodes: List<Int>, episodeId: String?, episodeExt: String?, episodeTitle: String?) -> Unit,
     onDismiss: () -> Unit
 ) {
     var selectedSeason by remember(seasons) { mutableStateOf(0) }
@@ -82,7 +82,7 @@ fun SeriesDetailScreen(
                 )
                 if (nextEpisode != null) {
                     Button(
-                        onClick = { onPlay(nextEpisode.seasonCmd, nextEpisode.episode, nextEpisode.episodes) },
+                        onClick = { onPlay(nextEpisode.seasonCmd, nextEpisode.episode, nextEpisode.episodes, nextEpisode.episodeRef?.episodeId, nextEpisode.episodeRef?.ext, null) },
                         colors = ButtonDefaults.buttonColors(containerColor = Accent),
                         modifier = Modifier.focusRequester(playFocus)
                     ) {
@@ -139,12 +139,15 @@ fun SeriesDetailScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         items(season.episodes) { ep ->
+                            val ref = season.episodeStreams[ep]
+                            val epTitle = ref?.title?.ifBlank { null } ?: "Episode $ep"
                             EpisodeCard(
                                 episode = ep,
+                                episodeTitle = epTitle,
                                 seasonName = season.name.ifBlank { "Season ${selectedSeason + 1}" },
                                 poster = season.poster,
                                 progress = progress[ep],
-                                onClick = { onPlay(season.cmd, ep, season.episodes) }
+                                onClick = { onPlay(season.cmd, ep, season.episodes, ref?.episodeId, ref?.ext, epTitle) }
                             )
                         }
                     }
@@ -157,6 +160,7 @@ fun SeriesDetailScreen(
 @Composable
 private fun EpisodeCard(
     episode: Int,
+    episodeTitle: String,
     seasonName: String,
     poster: String?,
     progress: EpisodeProgress?,
@@ -204,9 +208,11 @@ private fun EpisodeCard(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "Episode $episode",
+                        episodeTitle,
                         color = if (finished) TextSecondary else TextPrimary,
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         seasonName,

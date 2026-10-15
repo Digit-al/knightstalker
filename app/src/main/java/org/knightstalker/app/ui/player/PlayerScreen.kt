@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
+import org.knightstalker.app.domain.model.EpisodeRef
 import org.knightstalker.app.ui.theme.Accent
 import org.knightstalker.app.ui.theme.SuccessGreen
 import org.knightstalker.app.ui.theme.TextPrimary
@@ -70,11 +71,18 @@ fun PlayerScreen(
             "local" -> viewModel.playLocal(cmd, name)
             "vod" -> viewModel.playVod(cmd, name, ext)
             "episode" -> {
-                // cmd is "<seasonCmd>|<episode>|<ep1,ep2,...>" (season cmd is base64, no pipe).
+                // cmd is "<seasonCmd>|<episode>|<ep1,ep2,...>[|<episodeId>|<ext>]"
+                // (season cmd is base64, no pipe). The last two parts are optional so
+                // legacy history entries ("<seasonCmd>|<episode>") still resolve via
+                // the repository's episode ref cache.
                 val parts = cmd.split("|")
                 if (parts.size >= 2) {
                     val eps = parts.getOrNull(2)?.split(",")?.mapNotNull { it.toIntOrNull() } ?: emptyList()
-                    viewModel.playEpisode(parts[0], parts[1].toIntOrNull() ?: 1, name, eps)
+                    val epId = parts.getOrNull(3)
+                    val epExt = parts.getOrNull(4)
+                    val episodeRef = if (epId.isNullOrBlank()) null
+                    else EpisodeRef(episodeId = epId, ext = (epExt ?: "").ifBlank { "mp4" }, title = "")
+                    viewModel.playEpisode(parts[0], parts[1].toIntOrNull() ?: 1, name, eps, episodeRef)
                 }
             }
             "series" -> viewModel.playSeries(cmd, name)
