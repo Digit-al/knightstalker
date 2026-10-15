@@ -32,7 +32,8 @@ class XmltvParser {
     /** Result of a full feed parse: per-channel schedules + declared channels. */
     data class ParseResult(
         val schedules: Map<String, List<EpgEntry>>,
-        val channels: List<FeedChannel>
+        val channels: List<FeedChannel>,
+        val error: String? = null
     )
 
     /**
@@ -72,24 +73,33 @@ class XmltvParser {
         var chanName: StringBuilder? = null
         var inChanName = false
 
+        // Captured so the caller can surface WHY parsing produced no entries
+        // instead of a silent empty result (critical on Android, where the
+        // SAX parser can fail for reasons that don't surface as exceptions
+        // on the JVM).
+        var parseError: String? = null
+
         try {
-            // XMLTV files carry a standard DOCTYPE — accept it, but never
-            // fetch the referenced DTD from the network (XXE protection).
-            // Individual features may be unsupported on some platforms; fall
-            // back gracefully.
+            // Strip the DOCTYPE declaration — on Android the SAX parser may
+            // try to fetch the referenced DTD (xmltv.dtd) from the network
+            // and fail silently, causing zero entries to be parsed.
+            // The XMLTV DOCTYPE often contains an internal subset with its
+            // own `>` characters (e.g. <!ELEMENT tv (...)>), so we must use
+            // a regex that matches through to the end of the whole declaration.
+            // Strategy: remove from `<!DOCTYPE` up to (not including) the first
+            // `><tv` which marks the boundary between DOCTYPE and root element.
+            val cleanXml = xml.replace(
+                Regex("<!DOCTYPE[\\s\\S]*?><tv", RegexOption.IGNORE_CASE),
+                "<tv"
+            )
+
             val factory = SAXParserFactory.newInstance()
-            val secureFactory = try {
-                factory.apply {
-                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", false)
-                    setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-                }
-            } catch (_: Exception) { factory }
-            secureFactory.isNamespaceAware = false
-            secureFactory.isXIncludeAware = false
-            val parser = secureFactory.newSAXParser()
+            factory.isNamespaceAware = false
+            factory.isXIncludeAware = false
+            val parser = factory.newSAXParser()
 
             parser.parse(
-                InputSource(xml.byteInputStream()),
+                InputSource(cleanXml.byteInputStream()),
                 object : DefaultHandler() {
 
                     override fun startElement(
@@ -236,11 +246,12 @@ class XmltvParser {
                 }
             )
         } catch (e: Exception) {
+            parseError = e.toString()
             Log.e("XmltvParser", "SAX parse failed", e)
         }
 
         out.values.forEach { it.sortBy { e -> e.startTime } }
-        return ParseResult(out, channels)
+        return ParseResult(out, channels, parseError)
     }
 
     /**

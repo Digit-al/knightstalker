@@ -127,6 +127,13 @@ class EpgService(
                 val allIds = (channelIds + schedules.keys).toSet()
                 val entryCount = schedules.values.sumOf { it.size }
 
+                // If the parser produced nothing, surface the error (or a
+                // generic message) so the UI can show WHY the feed is empty.
+                val parseError = result.error
+                val effectiveError = parseError
+                    ?: if (entryCount == 0 && allIds.isEmpty()) "Feed téléchargé ($xml.length chars) mais 0 entrée parsée"
+                    else null
+
                 val idToName = result.channels.associate { it.id to (it.displayName ?: "") }
                 val byNormId = mutableMapOf<String, String>()
                 val byNormName = mutableMapOf<String, String>()
@@ -150,11 +157,14 @@ class EpgService(
                         channelCount = allIds.size,
                         entryCount = entryCount,
                         lastFetched = System.currentTimeMillis(),
-                        error = null,
+                        error = effectiveError,
                         isUpToDate = true
                     )
                 }
-                Log.d(TAG, "XMLTV feed for portal $portalId: $allIds channels, $entryCount entries")
+                Log.d(TAG, "XMLTV feed for portal $portalId: $allIds channels, $entryCount entries, error=$effectiveError")
+                // Even if parsing failed, we cache the (empty) result so we
+                // don't re-download on every call. The error is surfaced via
+                // the status flow.
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load XMLTV feed", e)
