@@ -291,8 +291,7 @@ class XmltvParser {
                 if (hour in 0..23 && minute in 0..59 && second in 0..59) {
                     val rest = v.substring(14).trim()
                     val offset = rest.takeIf { it.isNotEmpty() }?.let { parseOffset(it) }
-                    val localEpoch = localZoneEpoch(year, month, day, hour, minute, second)
-                    return if (offset != null) (localEpoch - offset) / 1000L else localEpoch / 1000L
+                    return toEpochSeconds(year, month, day, hour, minute, second, offset) / 1000L
                 }
             }
         }
@@ -307,23 +306,35 @@ class XmltvParser {
         val minute = g[5].toIntOrNull() ?: 0
         val second = g[6].toIntOrNull() ?: 0
         val offset = g[7].takeIf { it.isNotEmpty() }?.let { parseOffset(it) }
-        val localEpoch = localZoneEpoch(year, month, day, hour, minute, second)
-        return if (offset != null) (localEpoch - offset) / 1000L else localEpoch / 1000L
+        return toEpochSeconds(year, month, day, hour, minute, second, offset) / 1000L
     }
 
     /**
-     * Returns the epoch millis of a wall-clock date+time expressed in the
-     * device's current time zone. Uses java.time (API 24+) — much faster than
-     * Calendar.getInstance() for per-program parsing.
+     * Converts an XMLTV wall-clock time to epoch millis.
+     *
+     * When the feed specifies a UTC offset (the classic `+0200`), the
+     * wall-clock is interpreted AT THAT offset — independent of the device's
+     * time zone. Interpreting it in the device zone and then subtracting the
+     * offset again double-counts the shift: a `19:00 +0200` timestamp would
+     * end up at 15:00 UTC on a phone set to France (CEST, +0200) instead of
+     * the correct 17:00 UTC, pushing the whole schedule two hours into the
+     * past and making day-based filters return nothing.
+     *
+     * When the feed omits the offset, the time is interpreted in the device's
+     * local zone (the standard XMLTV fallback).
      */
-    private fun localZoneEpoch(
-        year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int
+    private fun toEpochSeconds(
+        year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int,
+        offset: Long?
     ): Long {
-        return java.time.LocalDateTime
-            .of(year, month, day, hour, minute, second)
-            .atZone(java.time.ZoneId.systemDefault())
-            .toInstant()
-            .toEpochMilli()
+        val clock = java.time.LocalDateTime.of(year, month, day, hour, minute, second)
+        return if (offset != null) {
+            java.time.OffsetDateTime.of(clock, java.time.ZoneOffset.ofTotalSeconds(offset.toInt()))
+                .toInstant()
+                .toEpochMilli()
+        } else {
+            clock.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }
     }
 
     /**
