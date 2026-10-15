@@ -20,6 +20,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.knightstalker.app.domain.model.EpgEntry
@@ -28,21 +30,71 @@ import org.knightstalker.app.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
 
+/**
+ * Pixels per minute in the timeline. 2dp per minute → 120dp per hour.
+ * A 1h programme = 120dp, a 30min show = 60dp.
+ */
+private const val PX_PER_MINUTE = 2
+
+/** Total width of the timeline: 24 hours × 60 min × PX_PER_MINUTE. */
+private val TOTAL_WIDTH_DP = 24 * 60 * PX_PER_MINUTE // 2880dp
+
+/** Row height for each channel. */
+private val ROW_HEIGHT_DP = 56.dp
+
+/** Channel name column width. */
+private val CHANNEL_COL_WIDTH = 130.dp
+
+/**
+ * Computes the epoch seconds of midnight (local) for a given date string.
+ */
+private fun dayStartEpoch(dateStr: String): Long {
+    return try {
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        fmt.timeZone = java.util.TimeZone.getDefault()
+        fmt.parse(dateStr)?.time?.div(1000) ?: 0L
+    } catch (_: Exception) {
+        0L
+    }
+}
+
 @Composable
 fun EpgScreen(
     viewModel: EpgViewModel,
     onChannelClick: (String, String) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
-    val horizontalScroll = rememberScrollState()
+    val density = LocalDensity.current
+
+    // Shared horizontal scroll state — all timeline rows scroll together.
+    val scrollState = rememberScrollState()
+    var hasAutoScrolled by remember { mutableStateOf(false) }
 
     if (state.isLoading && state.channels.isEmpty()) {
         LoadingIndicator()
         return
     }
 
+    // Auto-scroll to current time when today's data first appears.
+    val nowSec = System.currentTimeMillis() / 1000
+    val isToday = state.selectedDate == SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+    val dayStart = dayStartEpoch(state.selectedDate)
+
+    LaunchedEffect(isToday, state.epgData.isNotEmpty(), hasAutoScrolled) {
+        if (isToday && !hasAutoScrolled && state.epgData.isNotEmpty()) {
+            val nowOffsetDp = ((nowSec - dayStart) / 60f * PX_PER_MINUTE).toInt()
+                .coerceAtLeast(0)
+            // Center the now line: scroll so now is at ~35% of the viewport.
+            val targetPx = with(density) { nowOffsetDp.dp.toPx() }.toInt()
+            val viewportPx = with(density) { (300).dp.toPx() }.toInt()
+            val scrollTarget = (targetPx - viewportPx / 3).coerceAtLeast(0)
+            scrollState.scrollTo(scrollTarget)
+            hasAutoScrolled = true
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        // Category selector — filters which channels are shown below.
+        // Category selector
         CategoryRow(
             categories = state.categories,
             selected = state.selectedCategory,
@@ -81,13 +133,8 @@ fun EpgScreen(
             }
         }
 
-        // Guide status banner — always shown for XMLTV-feed portals (M3U/Xtream)
-        // so you can see exactly what happened with the feed: loading, an
-        // error, or the number of channels/programmes it parsed. A feed that
-        // fails to load looks identical to a portal with no EPG otherwise.
+        // Guide status banner
         if (state.epgFeedApplicable) {
-            // When the feed is loaded but empty, show raw diagnostics so we can
-            // tell a corrupted/truncated download apart from a parser failure.
             val feedEmpty = state.epgFeedEntries == 0 && state.epgFeedChannels == 0
             val rawKo = state.epgFeedRawSize / 1024
             val xmlMo = state.epgFeedXmlSize / 1024 / 1024
@@ -141,10 +188,41 @@ fun EpgScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
+            return
         }
 
-        // EPG grid — one row per channel in the selected category.
+        // EPG timeline grid
         LazyColumn(modifier = Modifier.fillMaxSize()) {
+            // Time header
+            item(key = "time_header") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(24.dp)
+                        .background(DarkSurface)
+                ) {
+                    Spacer(Modifier.width(CHANNEL_COL_WIDTH))
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(scrollState)
+                    ) {
+                        // Hour labels — one per hour
+                        for (h in 0..23) {
+                            Text(
+                                text = String.format(Locale.US, "%02d:00", h),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextSecondary,
+                                modifier = Modifier
+                                    .width((60 * PX_PER_MINUTE).dp)
+                                    .padding(start = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Channel rows
             items(state.channels, key = { it.id }) { channel ->
                 val epgEntries = state.epgData[channel.id] ?: emptyList()
 
@@ -157,12 +235,12 @@ fun EpgScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp)
+                        .height(ROW_HEIGHT_DP)
                 ) {
                     // Channel name
                     Box(
                         modifier = Modifier
-                            .width(140.dp)
+                            .width(CHANNEL_COL_WIDTH)
                             .fillMaxHeight()
                             .background(DarkSurfaceVariant)
                             .clickable { onChannelClick(channel.id, channel.cmd) }
@@ -177,44 +255,91 @@ fun EpgScreen(
                         )
                     }
 
-                    // EPG timeline
-                    Row(
+                    // Timeline — shared scroll state
+                    Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .horizontalScroll(horizontalScroll)
+                            .horizontalScroll(scrollState)
                     ) {
-                        if (epgEntries.isEmpty()) {
-                            // Distinguish "guide still loading", "guide failed",
-                            // "genuinely no programmes" and WHY a channel has no
-                            // programmes once the feed is loaded — otherwise a
-                            // feed that is still downloading looks identical to
-                            // a channel that has no EPG.
-                            val message = when {
-                                state.epgFeedLoading -> "Chargement du guide…"
-                                state.epgFeedError != null -> "Guide: ${state.epgFeedError}"
-                                else -> {
-                                    val reason = state.epgDiagnose[channel.id]
-                                    if (reason != null) "No programme — $reason" else "No program info"
-                                }
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .width(600.dp)
-                                    .fillMaxHeight()
-                                    .background(CardBackground)
-                                    .padding(8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text(
-                                    message,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary
+                        // Fixed-width container = one day
+                        Box(
+                            modifier = Modifier
+                                .width(TOTAL_WIDTH_DP.dp)
+                                .fillMaxHeight()
+                        ) {
+                            // Hour grid lines (subtle)
+                            for (h in 1..23) {
+                                Box(
+                                    modifier = Modifier
+                                        .offset(x = (h * 60 * PX_PER_MINUTE).dp)
+                                        .width(1.dp)
+                                        .fillMaxHeight()
+                                        .background(Color.White.copy(alpha = 0.04f))
                                 )
                             }
-                        } else {
+
+                            // Programme blocks
+                            val sdf = SimpleDateFormat("HH:mm", Locale.US)
                             epgEntries.forEach { entry ->
-                                EpgCell(entry = entry)
+                                val entryStart = entry.startTime
+                                val entryEnd = entry.endTime
+
+                                // Only render entries overlapping this day
+                                if (entryEnd <= dayStart || entryStart >= dayStart + 86400) return@forEach
+
+                                val clampedStart = entryStart.coerceAtLeast(dayStart)
+                                val clampedEnd = entryEnd.coerceAtMost(dayStart + 86400L)
+                                val startOffsetMin = ((clampedStart - dayStart) / 60).toInt()
+                                val durationMin = ((clampedEnd - clampedStart) / 60).toInt()
+
+                                if (durationMin < 1) return@forEach
+
+                                val isCurrent = isToday && nowSec in entry.startTime..entry.endTime
+
+                                Box(
+                                    modifier = Modifier
+                                        .offset(x = (startOffsetMin * PX_PER_MINUTE).dp)
+                                        .width((durationMin * PX_PER_MINUTE).dp)
+                                        .fillMaxHeight()
+                                        .padding(vertical = 1.dp, horizontal = 1.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(
+                                            if (isCurrent) Accent.copy(alpha = 0.25f)
+                                            else CardBackground
+                                        )
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = sdf.format(Date(entry.startTime * 1000)),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = TextSecondary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Clip
+                                        )
+                                        Text(
+                                            text = entry.title,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+
+                            // "Now" line (red)
+                            if (isToday) {
+                                val nowOffsetDp = ((nowSec - dayStart) / 60f * PX_PER_MINUTE).toInt()
+                                if (nowOffsetDp in 0..(TOTAL_WIDTH_DP)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .offset(x = nowOffsetDp.dp)
+                                            .width(2.dp)
+                                            .fillMaxHeight()
+                                            .background(Color(0xFFE53935))
+                                    )
+                                }
                             }
                         }
                     }
@@ -286,39 +411,6 @@ private fun CategoryRow(
                     }
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun EpgCell(entry: EpgEntry) {
-    val width = (entry.duration / 60f * 4).dp.coerceIn(80.dp, 400.dp)
-    val now = System.currentTimeMillis() / 1000
-    val isCurrent = now in entry.startTime..entry.endTime
-
-    val sdf = SimpleDateFormat("HH:mm", Locale.US)
-
-    Box(
-        modifier = Modifier
-            .width(width)
-            .fillMaxHeight()
-            .padding(1.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (isCurrent) Accent.copy(alpha = 0.3f) else CardBackground)
-            .padding(4.dp)
-    ) {
-        Column {
-            Text(
-                text = sdf.format(Date(entry.startTime * 1000)),
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
-            )
-            Text(
-                text = entry.title,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
         }
     }
 }
