@@ -89,10 +89,19 @@ fun KnightNavGraph() {
             val vm: PortalViewModel = viewModel(
                 factory = PortalViewModel.Factory(module.portalRepository, module.authManager, module.userPreferences, module.mediaIndexRepository, module.epgService)
             )
+            // Only reachable from Home (Settings > "Manage All Portals") when there is
+            // a previous entry on the back stack — that's when the back arrow applies.
+            val canGoBack = navController.previousBackStackEntry != null
+            val onBack: (() -> Unit)? = if (canGoBack) {
+                {
+                    navController.popBackStack()
+                }
+            } else null
             PortalListScreen(
                 viewModel = vm,
                 onAddPortal = { navController.navigate(NavRoute.PortalEdit.createRoute()) },
                 onEditPortal = { id -> navController.navigate(NavRoute.PortalEdit.createRoute(id)) },
+                onBack = onBack,
                 onConnected = {
                     navController.navigate(NavRoute.Home.route) {
                         popUpTo(NavRoute.Portals.route) { inclusive = true }

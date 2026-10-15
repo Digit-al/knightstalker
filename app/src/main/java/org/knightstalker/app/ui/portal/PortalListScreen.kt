@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,12 +24,17 @@ fun PortalListScreen(
     viewModel: PortalViewModel,
     onAddPortal: () -> Unit,
     onEditPortal: (Long) -> Unit,
-    onConnected: () -> Unit
+    onConnected: () -> Unit,
+    onBack: (() -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
 
-    LaunchedEffect(state.connectionState) {
-        if (state.connectionState == ConnectionState.CONNECTED) {
+    // Navigate home only after a genuine successful connect (auto-connect on first
+    // launch, or the user tapping Connect). Entering this screen while already
+    // connected (e.g. via Settings > "Manage All Portals") must NOT bounce to home.
+    LaunchedEffect(state.pendingNavigateHome) {
+        if (state.pendingNavigateHome) {
+            viewModel.consumeNavigateHome()
             onConnected()
         }
     }
@@ -37,6 +43,17 @@ fun PortalListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("KnightStalker", style = MaterialTheme.typography.headlineMedium) },
+                navigationIcon = {
+                    onBack?.let { back ->
+                        IconButton(onClick = back) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = TextPrimary
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = DarkSurface,
                     titleContentColor = TextPrimary

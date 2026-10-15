@@ -20,7 +20,9 @@ data class PortalListState(
     val connectionState: ConnectionState = ConnectionState.DISCONNECTED,
     val error: String? = null,
     val connectedPortalId: Long? = null,
-    val autoConnectTriggered: Boolean = false
+    // Set to true when a connect() call (or the auto-connect on launch) succeeds
+    // and the UI should navigate home. Consumed once by the screen.
+    val pendingNavigateHome: Boolean = false
 )
 
 class PortalViewModel(
@@ -60,7 +62,6 @@ class PortalViewModel(
             val lastId = preferences.lastPortalId.first()
             if (lastId != null && lastId > 0 && authManager.connectionState.value == ConnectionState.DISCONNECTED) {
                 portalRepository.portals.first().find { it.id == lastId }?.let { portal ->
-                    _state.update { it.copy(autoConnectTriggered = true) }
                     connect(portal)
                 }
             }
@@ -73,8 +74,15 @@ class PortalViewModel(
             if (success) {
                 portalRepository.markConnected(portal.id)
                 preferences.setLastPortalId(portal.id)
+                // Only the successful connect triggers navigation home — never the
+                // mere fact of being already connected when the screen composes.
+                _state.update { it.copy(pendingNavigateHome = true) }
             }
         }
+    }
+
+    fun consumeNavigateHome() {
+        _state.update { it.copy(pendingNavigateHome = false) }
     }
 
     fun disconnect() {
