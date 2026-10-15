@@ -314,7 +314,7 @@ private fun HomeScreen(
 
                 composable("epg") {
                     val vm: EpgViewModel = viewModel(
-                        factory = EpgViewModel.Factory(module.channelRepository, module.epgRepository, module.authManager)
+                        factory = EpgViewModel.Factory(module.channelRepository, module.epgRepository, module.authManager, module.epgService)
                     )
                     EpgScreen(
                         viewModel = vm,

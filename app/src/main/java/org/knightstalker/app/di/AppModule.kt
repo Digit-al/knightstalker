@@ -95,8 +95,20 @@ class AppModule(private val context: Context) {
         ChannelRepository(stalkerApi, database.favoriteDao(), authManager, xtreamApi)
     }
 
+    // Dedicated client for XMLTV EPG feeds. Feeds are large (10-130 MB of XML,
+    // often gzipped) and must be read to the end; the plain 15 s readTimeout of
+    // [plainHttpClient] is far too short on mobile and causes the feed to
+    // time out, which in turn leaves every channel without an EPG.
+    private val epgHttpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
     val epgService: EpgService by lazy {
-        EpgService(plainHttpClient, database.portalDao())
+        EpgService(epgHttpClient, database.portalDao())
     }
 
     val epgRepository: EpgRepository by lazy {

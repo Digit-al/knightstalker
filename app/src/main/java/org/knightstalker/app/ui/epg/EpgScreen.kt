@@ -81,6 +81,37 @@ fun EpgScreen(
             }
         }
 
+        // Guide status banner — shown while the XMLTV feed is downloading or
+        // when it failed, with a retry button. Without this, a 15 MB feed that
+        // is still downloading looks exactly like a portal with no EPG.
+        if (state.epgFeedLoading || state.epgFeedError != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DarkSurfaceVariant)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = if (state.epgFeedLoading) "Chargement du guide…" else (state.epgFeedError ?: "Guide indisponible"),
+                    color = if (state.epgFeedLoading) TextSecondary else WarningOrange,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "Réessayer",
+                    color = Accent,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurface)
+                        .clickable { viewModel.refreshAll() }
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+        }
+
         if (state.channels.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -136,6 +167,15 @@ fun EpgScreen(
                             .horizontalScroll(horizontalScroll)
                     ) {
                         if (epgEntries.isEmpty()) {
+                            // Distinguish "guide still loading", "guide failed" and
+                            // "genuinely no programmes" — otherwise a feed that
+                            // is still downloading looks identical to a channel
+                            // that has no EPG.
+                            val message = when {
+                                state.epgFeedLoading -> "Chargement du guide…"
+                                state.epgFeedError != null -> "Guide: ${state.epgFeedError}"
+                                else -> "No program info"
+                            }
                             Box(
                                 modifier = Modifier
                                     .width(600.dp)
@@ -145,7 +185,7 @@ fun EpgScreen(
                                 contentAlignment = Alignment.CenterStart
                             ) {
                                 Text(
-                                    "No program info",
+                                    message,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary
                                 )
