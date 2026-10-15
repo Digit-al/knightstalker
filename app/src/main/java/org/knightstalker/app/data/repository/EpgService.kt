@@ -4,6 +4,8 @@ package org.knightstalker.app.data.repository
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -40,14 +42,20 @@ class EpgService(
     private val parser: XmltvParser = XmltvParser()
 ) {
 
-    /** Cache entry: parsed feed + the set of channel ids it covers. */
+    /** Cache entry: parsed feed + the channels it covers. */
     private data class FeedCache(
         val fetchedAt: Long,
         val schedules: Map<String, List<EpgEntry>>,
-        val channelIds: Set<String>
+        val channels: Map<String, String>  // channel id -> display name
     )
 
     private val cache = mutableMapOf<Long, FeedCache>()
+
+    /**
+     * One lock per portal so concurrent [ensureFeed] callers share a single
+     * download+parse instead of each fetching and parsing the feed themselves.
+     */
+    private val feedLocks = mutableMapOf<Long, Mutex>()
 
     private val _status = MutableStateFlow(EpgStatus())
     /** UI-facing status of the active portal's XMLTV feed. */
@@ -85,8 +93,17 @@ class EpgService(
             }
         }
 
-        _status.update { it.copy(isLoading = true, error = null) }
-        return withContext(Dispatchers.IO) {
+        val lock = synchronized(feedLocks) { feedLocks.getOrPut(portalId) { Mutex() } }
+        return lock.withLock {
+            // Double-check: another caller may have completed the download while
+            // we were waiting on the lock.
+            synchronized(cache) {
+                val existing = cache[portalId]
+                if (existing != null && !force && !isStale(existing.fetchedAt)) return@withLock true
+            }
+
+            _status.update { it.copy(isLoading = true, error = null) }
+            withContext(Dispatchers.IO) {
             try {
                 val request = Request.Builder().url(url).get().build()
                 val response = client.newCall(request).execute()
@@ -118,7 +135,7 @@ class EpgService(
                     cache[portalId] = FeedCache(
                         fetchedAt = System.currentTimeMillis(),
                         schedules = schedules,
-                        channelIds = allIds
+                        channels = result.channels.associate { it.id to (it.displayName ?: "") }
                     )
                 }
                 _status.update {
@@ -137,6 +154,7 @@ class EpgService(
                 Log.e(TAG, "Failed to load XMLTV feed", e)
                 _status.update { it.copy(isLoading = false, error = e.message) }
                 false
+            }
             }
         }
     }
@@ -183,11 +201,24 @@ class EpgService(
      * Resolves an arbitrary EPG key to a feed channel id.
      */
     private fun resolveChannelId(feed: FeedCache, epgKey: String): String? {
-        if (epgKey in feed.channelIds) return epgKey
+        val channelIds = feed.channels.keys
+        // 1. Exact id match.
+        if (epgKey in channelIds) return epgKey
+        // 2. Case-insensitive id match.
         val lower = epgKey.lowercase()
-        feed.channelIds.firstOrNull { it.lowercase() == lower }?.let { return it }
+        feed.channels.keys.firstOrNull { it.lowercase() == lower }?.let { return it }
+        // 3. Compact id match (strips dots/dashes/whitespace).
         val compact = lower.replace(Regex("[^a-z0-9]"), "")
-        feed.channelIds.firstOrNull { it.lowercase().replace(Regex("[^a-z0-9]"), "") == compact }?.let { return it }
+        feed.channels.keys.firstOrNull {
+            it.lowercase().replace(Regex("[^a-z0-9]"), "") == compact
+        }?.let { return it }
+        // 4. Fallback: the portal's EPG key is often the channel NAME
+        // (Xtream epg_channel_id = stream name). Match against the feed's
+        // declared display names.
+        val compactKey = lower.replace(Regex("[^a-z0-9]"), "")
+        feed.channels.entries.firstOrNull { (_, name) ->
+            name.replace(Regex("[^a-z0-9]"), "").lowercase() == compactKey
+        }?.key?.let { return it }
         return null
     }
 

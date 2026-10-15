@@ -6,6 +6,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import android.util.Log
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -88,14 +91,31 @@ class LiveTvViewModel(
                     val channels = if (search != null) {
                         rawChannels.filter { it.name.contains(search, ignoreCase = true) }
                     } else rawChannels
-                    val enriched = channels.map { channel ->
-                        // Load short EPG for each channel
-                        val epgResult = epgRepository.getShortEpg(portal.url, channel.id)
-                        val epgEntries = epgResult.getOrNull() ?: emptyList()
-                        val now = System.currentTimeMillis() / 1000
-                        val nowPlaying = epgEntries.find { it.startTime <= now && it.endTime > now }
-                        val upNext = epgEntries.find { it.startTime > now }
-                        channel.copy(nowPlaying = nowPlaying, upNext = upNext)
+
+                    // Enrich each channel with now/next EPG in parallel — sequential
+                    // calls on a 50-channel page can take tens of seconds when the
+                    // EPG feed is large, even though each lookup is a cache hit.
+                    val enriched = if (channels.isEmpty()) {
+                        emptyList()
+                    } else {
+                        coroutineScope {
+                            channels.map { channel ->
+                                async {
+                                    try {
+                                        val entries = epgRepository
+                                            .getShortEpg(portal.url, channel.id)
+                                            .getOrNull() ?: emptyList()
+                                        val now = System.currentTimeMillis() / 1000
+                                        val nowPlaying = entries.find { it.startTime <= now && it.endTime > now }
+                                        val upNext = entries.find { it.startTime > now }
+                                        channel.copy(nowPlaying = nowPlaying, upNext = upNext)
+                                    } catch (e: Exception) {
+                                        Log.w("LiveTvVM", "short EPG failed for ${channel.name}", e)
+                                        channel
+                                    }
+                                }
+                            }.awaitAll()
+                        }
                     }
 
                     _state.update {

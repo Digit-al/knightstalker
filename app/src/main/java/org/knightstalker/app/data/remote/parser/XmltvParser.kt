@@ -7,7 +7,6 @@ import org.xml.sax.Attributes
 import org.xml.sax.InputSource
 import org.xml.sax.helpers.DefaultHandler
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Locale
 import javax.xml.parsers.SAXParserFactory
 import kotlin.text.MatchResult
@@ -250,10 +249,6 @@ class XmltvParser {
 
     // --- XMLTV time helpers ---
 
-    private fun matchClassic(v: String): MatchResult? =
-        Regex("^(\\d{4})(\\d{2})(\\d{2})(\\d{2})?(\\d{2})?(\\d{2})?\\s*([+-]\\d{2}:?\\d{2})?$")
-            .matchEntire(v)
-
     private fun matchIso(v: String): MatchResult? =
         Regex("^(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2}):(\\d{2})(?:\\.\\d+)?\\s*([+-]\\d{2}:?\\d{2})?$")
             .matchEntire(v)
@@ -272,35 +267,74 @@ class XmltvParser {
         val v = value.trim()
         if (v.isEmpty()) return null
 
-        val m = matchClassic(v) ?: matchIso(v) ?: return null
-        val g = m.groupValues
+        // Fast path: classic "20250101190000 +0100" — the dominant XMLTV layout.
+        // Avoids any regex or Calendar/ZoneId lookup (this is called once per
+        // <programme> start AND stop, so it matters for large feeds).
+        if (v.length >= 12 &&
+            v[4] != '-' && // not ISO-dash-separated (2025-01-01...)
+            (v[4] in '0'..'9') && v[6] in '0'..'9'
+        ) {
+            val year = v.substring(0, 4).toIntOrNull() ?: return null
+            val month = v.substring(4, 6).toIntOrNull() ?: return null
+            val day = v.substring(6, 8).toIntOrNull() ?: return null
+            if (month in 1..12 && day in 1..31) {
+                val hour = if (v.length > 8) v.substring(8, 10).toIntOrNull() ?: 0 else 0
+                val minute = if (v.length > 10) v.substring(10, 12).toIntOrNull() ?: 0 else 0
+                val second = if (v.length > 12) v.substring(12, 14).toIntOrNull() ?: 0 else 0
+                if (hour in 0..23 && minute in 0..59 && second in 0..59) {
+                    val rest = v.substring(14).trim()
+                    val offset = rest.takeIf { it.isNotEmpty() }?.let { parseOffset(it) }
+                    val localEpoch = localZoneEpoch(year, month, day, hour, minute, second)
+                    return if (offset != null) (localEpoch - offset) / 1000L else localEpoch / 1000L
+                }
+            }
+        }
 
+        // Fallback: regex-based ISO parsing.
+        val m = matchIso(v) ?: return null
+        val g = m.groupValues
         val year = g[1].toIntOrNull() ?: return null
         val month = g[2].toIntOrNull() ?: return null
         val day = g[3].toIntOrNull() ?: return null
         val hour = g[4].toIntOrNull() ?: 0
         val minute = g[5].toIntOrNull() ?: 0
         val second = g[6].toIntOrNull() ?: 0
-        val offset = g[7].takeIf { it.isNotEmpty() }
+        val offset = g[7].takeIf { it.isNotEmpty() }?.let { parseOffset(it) }
+        val localEpoch = localZoneEpoch(year, month, day, hour, minute, second)
+        return if (offset != null) (localEpoch - offset) / 1000L else localEpoch / 1000L
+    }
 
-        // Wall-clock in the device zone -> naive epoch (device offset removed),
-        // then apply the feed's own offset if present.
-        val cal = Calendar.getInstance().apply {
-            clear()
-            set(year, month - 1, day, hour, minute, second)
+    /**
+     * Returns the epoch millis of a wall-clock date+time expressed in the
+     * device's current time zone. Uses java.time (API 24+) — much faster than
+     * Calendar.getInstance() for per-program parsing.
+     */
+    private fun localZoneEpoch(
+        year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int
+    ): Long {
+        return java.time.LocalDateTime
+            .of(year, month, day, hour, minute, second)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+    }
+
+    /**
+     * Parses an XMLTV offset like "+0100", "-05:30", or "+01:00" into seconds.
+     * Returns null when the string does not look like an offset.
+     */
+    private fun parseOffset(value: String): Long? {
+        val sign = when (value[0]) {
+            '-' -> -1L
+            '+' -> 1L
+            else -> return null
         }
-        val zoneOffsetMs = cal.get(Calendar.ZONE_OFFSET).toLong() * 1000L +
-            cal.get(Calendar.DST_OFFSET).toLong() * 1000L
-        var epochMillis = cal.timeInMillis - zoneOffsetMs
-        if (offset != null) {
-            // UTC = wall clock - feed offset
-            val sign = if (offset.startsWith("-")) -1L else 1L
-            val digits = offset.replace("-", "").replace(":", "").trim()
-            val oh = digits.take(2).toIntOrNull() ?: 0
-            val om = digits.drop(2).take(2).toIntOrNull() ?: 0
-            epochMillis -= sign * (oh * 3600L + om * 60L) * 1000L
-        }
-        return epochMillis / 1000L
+        val digits = value.substring(1).replace(":", "")
+        if (digits.length < 2) return null
+        val oh = digits.take(2).toIntOrNull() ?: return null
+        val om = digits.drop(2).take(2).toIntOrNull() ?: 0
+        if (oh > 14) return null // sanity: XMLTV offsets are within ±14h
+        return sign * (oh * 3600L + om * 60L)
     }
 
     /** Parses XMLTV `duration` seconds, e.g. "7200" or "01:20:00". */
