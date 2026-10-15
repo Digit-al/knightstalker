@@ -3,20 +3,26 @@ package org.knightstalker.app.data.remote.parser
 
 import android.util.Log
 import org.knightstalker.app.domain.model.EpgEntry
-import org.xml.sax.Attributes
-import org.xml.sax.InputSource
-import org.xml.sax.helpers.DefaultHandler
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserFactory
+import java.io.StringReader
 import java.text.SimpleDateFormat
 import java.util.Locale
-import javax.xml.parsers.SAXParserFactory
 import kotlin.text.MatchResult
 
 /**
  * Parser for XMLTV EPG files / feeds.
  *
- * Uses a streaming SAX parser so that large feeds (tens of MB) can be parsed
- * without loading the entire DOM tree into memory — a 67 MB feed that would
- * otherwise OOM a phone now parses with a flat, small result map.
+ * Uses Android's native [XmlPullParser] (pull-based, streaming) so that large
+ * feeds (tens of MB) can be parsed without loading the entire DOM tree into
+ * memory — a 67 MB feed that would otherwise OOM a phone now parses with a
+ * flat, small result map.
+ *
+ * We deliberately avoid `SAXParserFactory` / kxml2 on Android: depending on
+ * the API level it can fail with "This parser does not support specification
+ * Unknown version 0.0", or silently try to resolve the XMLTV DOCTYPE DTD and
+ * return zero entries. `XmlPullParser` (also kxml2, but driven directly) is
+ * the reliable, platform-blessed choice.
  *
  * [parse] returns EPG entries keyed by the `channel` attribute.
  * [parseChannels] returns the declared `<channel>` elements.
@@ -37,7 +43,7 @@ class XmltvParser {
     )
 
     /**
-     * Parses the feed in a single streaming SAX pass.
+     * Parses the feed in a single streaming pass.
      *
      * [day] ("yyyy-MM-dd") restricts entries to that day (local time) when
      * non-null; null returns every entry.
@@ -74,49 +80,32 @@ class XmltvParser {
         var inChanName = false
 
         // Captured so the caller can surface WHY parsing produced no entries
-        // instead of a silent empty result (critical on Android, where the
-        // SAX parser can fail for reasons that don't surface as exceptions
-        // on the JVM).
+        // instead of a silent empty result (critical on Android).
         var parseError: String? = null
 
+        // Strip the DOCTYPE declaration before parsing. The standard XMLTV feed
+        // uses `<!DOCTYPE tv SYSTEM "xmltv.dtd">`; some Android XML engines try
+        // to resolve that external DTD and choke. Stripping it (through to the
+        // <tv> root) leaves the XML well-formed with no DTD reference.
+        val cleanXml = xml.replace(
+            Regex("<!DOCTYPE[\\s\\S]*?><tv", RegexOption.IGNORE_CASE),
+            "<tv"
+        )
+
         try {
-            // Strip the DOCTYPE declaration — on Android the SAX parser may
-            // try to fetch the referenced DTD (xmltv.dtd) from the network
-            // and fail silently, causing zero entries to be parsed.
-            // The XMLTV DOCTYPE often contains an internal subset with its
-            // own `>` characters (e.g. <!ELEMENT tv (...)>), so we must use
-            // a regex that matches through to the end of the whole declaration.
-            // Strategy: remove from `<!DOCTYPE` up to (not including) the first
-            // `><tv` which marks the boundary between DOCTYPE and root element.
-            val cleanXml = xml.replace(
-                Regex("<!DOCTYPE[\\s\\S]*?><tv", RegexOption.IGNORE_CASE),
-                "<tv"
-            )
+            val factory = XmlPullParserFactory.newInstance()
+            val parser = factory.newPullParser()
+            // XMLTV feeds never use namespace prefixes — element names and
+            // attribute names are always returned as-is.
+            parser.setInput(StringReader(cleanXml))
 
-            val factory = SAXParserFactory.newInstance()
-            factory.isNamespaceAware = false
-            factory.isXIncludeAware = false
-            val parser = factory.newSAXParser()
-
-            parser.parse(
-                InputSource(cleanXml.byteInputStream()),
-                object : DefaultHandler() {
-
-                    override fun startElement(
-                        uri: String,
-                        localName: String,
-                        qName: String,
-                        attrs: Attributes
-                    ) {
-                        // Some JVMs (including Android on certain API levels)
-                        // leave localName empty when the parser is not
-                        // namespace-aware, putting the element name in qName
-                        // instead. XMLTV feeds never use namespace prefixes,
-                        // so qName is always the plain element name here.
-                        val name = localName.ifBlank { qName }
-                        when (name) {
+            var event = parser.eventType
+            while (event != XmlPullParser.END_DOCUMENT) {
+                when (event) {
+                    XmlPullParser.START_TAG -> {
+                        when (parser.name) {
                             "channel" -> {
-                                chanId = attrs.getValue("id")
+                                chanId = parser.getAttributeValue(null, "id")
                             }
 
                             "display-name" -> {
@@ -127,11 +116,11 @@ class XmltvParser {
                             }
 
                             "programme" -> {
-                                val ch = attrs.getValue("channel")?.takeIf { it.isNotBlank() }
-                                val startStr = attrs.getValue("start")
-                                val stopStr = attrs.getValue("stop")
-                                val stopDateStr = attrs.getValue("stopdate")
-                                val durationStr = attrs.getValue("duration")
+                                val ch = parser.getAttributeValue(null, "channel")?.takeIf { it.isNotBlank() }
+                                val startStr = parser.getAttributeValue(null, "start")
+                                val stopStr = parser.getAttributeValue(null, "stop")
+                                val stopDateStr = parser.getAttributeValue(null, "stopdate")
+                                val durationStr = parser.getAttributeValue(null, "duration")
 
                                 val parsedStart =
                                     startStr?.takeIf { it.isNotBlank() }?.let { parseXmltvTime(it) }
@@ -167,22 +156,17 @@ class XmltvParser {
                         }
                     }
 
-                    override fun characters(ch: CharArray, start: Int, length: Int) {
+                    XmlPullParser.TEXT -> {
+                        val text = parser.text
                         when {
-                            inTitle -> progTitle?.append(ch, start, length)
-                            inDesc -> progDesc?.append(ch, start, length)
-                            inChanName -> chanName?.append(ch, start, length)
+                            inTitle -> progTitle?.append(text)
+                            inDesc -> progDesc?.append(text)
+                            inChanName -> chanName?.append(text)
                         }
                     }
 
-                    override fun endElement(
-                        uri: String,
-                        localName: String,
-                        qName: String
-                    ) {
-                        // Same localName/qName quirk as in startElement.
-                        val name = localName.ifBlank { qName }
-                        when (name) {
+                    XmlPullParser.END_TAG -> {
+                        when (parser.name) {
                             "title" -> {
                                 inTitle = false
                             }
@@ -244,14 +228,138 @@ class XmltvParser {
                         }
                     }
                 }
-            )
+                event = parser.next()
+            }
         } catch (e: Exception) {
             parseError = e.toString()
-            Log.e("XmltvParser", "SAX parse failed", e)
+            Log.e("XmltvParser", "XmlPullParser failed", e)
+        }
+
+        // Fallback: if the pull parser returned nothing, run the lightweight
+        // string scanner as a last resort — guarantees a result for well-formed
+        // XMLTV feeds even on quirky platforms.
+        if (out.isEmpty() && channels.isEmpty()) {
+            Log.w("XmltvParser", "XmlPullParser produced 0 results — running fallback scanner")
+            fallbackScan(cleanXml, dayStart, dayEnd, out, channels)
         }
 
         out.values.forEach { it.sortBy { e -> e.startTime } }
         return ParseResult(out, channels, parseError)
+    }
+
+    /**
+     * Lightweight fallback parser that extracts <programme> blocks using
+     * string operations (indexOf). Used when the pull parser fails.
+     */
+    private fun fallbackScan(
+        xml: String,
+        dayStart: Long?,
+        dayEnd: Long?,
+        out: MutableMap<String, MutableList<EpgEntry>>,
+        channels: MutableList<FeedChannel>
+    ) {
+        val progStart = "<programme"
+        val progEnd = "</programme>"
+        val seenChannels = mutableSetOf<String>()
+        var pos = 0
+        var count = 0
+
+        while (true) {
+            val tagStart = xml.indexOf(progStart, pos)
+            if (tagStart == -1) break
+
+            // Find the end of the opening tag (the `>` that closes it).
+            val tagEnd = xml.indexOf('>', tagStart)
+            if (tagEnd == -1) break
+
+            val tagXml = xml.substring(tagStart, tagEnd + 1)
+
+            // Find the closing </programme>.
+            val blockEnd = xml.indexOf(progEnd, tagEnd)
+            if (blockEnd == -1) break
+            val blockEndFull = blockEnd + progEnd.length
+            val blockXml = xml.substring(tagEnd + 1, blockEnd)
+
+            // Extract channel attribute.
+            val channel = extractAttr(tagXml, "channel")
+            val startStr = extractAttr(tagXml, "start")
+            val stopStr = extractAttr(tagXml, "stop")
+
+            // Parse times.
+            val start = startStr?.let { try { parseXmltvTime(it) } catch (_: Exception) { null } }
+            val stop = stopStr?.let { try { parseXmltvTime(it) } catch (_: Exception) { null } }
+                ?: (start?.plus(3600) ?: null)
+
+            // Extract title (first <title...>...</title> in the block).
+            val title = extractTagText(blockXml, "title") ?: "Programme"
+
+            // Day filter.
+            if (channel != null && start != null && stop != null) {
+                val inDay = dayStart == null || dayEnd == null || (stop > dayStart && start < dayEnd)
+                if (inDay) {
+                    val entry = EpgEntry(
+                        id = "${channel}_${start}",
+                        channelId = channel,
+                        title = title,
+                        description = null,
+                        startTime = start,
+                        endTime = stop,
+                        duration = ((stop - start) / 60).toInt()
+                    )
+                    out.getOrPut(channel) { mutableListOf() }.add(entry)
+                    count++
+                }
+            }
+
+            // Track channel ids so we can populate the channels list.
+            if (channel != null && seenChannels.add(channel)) {
+                channels.add(FeedChannel(channel, null))
+            }
+
+            pos = blockEndFull
+        }
+
+        Log.d("XmltvParser", "Fallback scan: $count programmes from ${out.size} channels")
+    }
+
+    /**
+     * Extracts a single- or double-quoted attribute value from an XML tag string.
+     */
+    private fun extractAttr(tag: String, name: String): String? {
+        // Pattern: name="value" or name='value'
+        val patterns = listOf(
+            Regex("$name=\"([^\"]*)\""),
+            Regex("$name='([^']*)'")
+        )
+        for (p in patterns) {
+            val m = p.find(tag)
+            if (m != null) return m.groupValues[1]
+        }
+        return null
+    }
+
+    /**
+     * Extracts the text content of the first occurrence of a named element.
+     * Returns the text between <name...> and </name> (or null if not found).
+     */
+    private fun extractTagText(block: String, tagName: String): String? {
+        val openTag = "<${tagName}"
+        var idx = block.indexOf(openTag)
+        while (idx != -1) {
+            // Skip to end of opening tag.
+            val gt = block.indexOf('>', idx)
+            if (gt == -1) break
+            // Self-closing?
+            if (gt >= 1 && block[gt - 1] == '/') {
+                idx = block.indexOf(openTag, gt)
+                continue
+            }
+            val closeTag = "</${tagName}>"
+            val endIdx = block.indexOf(closeTag, gt)
+            if (endIdx == -1) break
+            return block.substring(gt + 1, endIdx).trim()
+        }
+        return null
     }
 
     /**
@@ -325,14 +433,8 @@ class XmltvParser {
      *
      * When the feed specifies a UTC offset (the classic `+0200`), the
      * wall-clock is interpreted AT THAT offset — independent of the device's
-     * time zone. Interpreting it in the device zone and then subtracting the
-     * offset again double-counts the shift: a `19:00 +0200` timestamp would
-     * end up at 15:00 UTC on a phone set to France (CEST, +0200) instead of
-     * the correct 17:00 UTC, pushing the whole schedule two hours into the
-     * past and making day-based filters return nothing.
-     *
-     * When the feed omits the offset, the time is interpreted in the device's
-     * local zone (the standard XMLTV fallback).
+     * time zone. When the feed omits the offset, the time is interpreted in the
+     * device's local zone (the standard XMLTV fallback).
      */
     private fun toEpochSeconds(
         year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int,
