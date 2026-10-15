@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.ByteArrayInputStream
+import java.util.zip.GZIPInputStream
 import org.knightstalker.app.data.local.db.PortalDao
 import org.knightstalker.app.data.local.entity.PortalEntity
 import org.knightstalker.app.data.remote.parser.XmltvParser
@@ -91,7 +93,16 @@ class EpgService(
                 if (!response.isSuccessful) {
                     throw Exception("HTTP ${response.code}: ${response.message}")
                 }
-                val xml = response.body?.string() ?: ""
+                // OkHttp already transparently decodes Content-Encoding: gzip.
+                // Additionally handle gzip *content* (.xml.gz feeds): detect the
+                // gzip magic bytes (1F 8B) and inflate — many EPG providers serve
+                // compressed XMLTV regardless of the response headers.
+                val raw = response.body?.bytes() ?: throw Exception("Empty EPG feed")
+                val xml = if (raw.size >= 2 && (raw[0].toInt() and 0xFF) == 0x1F && (raw[1].toInt() and 0xFF) == 0x8B) {
+                    GZIPInputStream(ByteArrayInputStream(raw)).bufferedReader().use { it.readText() }
+                } else {
+                    String(raw)
+                }
                 if (xml.isBlank()) throw Exception("Empty EPG feed")
 
                 val schedules = parser.parse(xml, day = null)
