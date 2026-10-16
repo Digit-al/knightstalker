@@ -410,7 +410,8 @@ class XmltvParser {
                 if (hour in 0..23 && minute in 0..59 && second in 0..59) {
                     val rest = v.substring(14).trim()
                     val offset = rest.takeIf { it.isNotEmpty() }?.let { parseOffset(it) }
-                    return toEpochSeconds(year, month, day, hour, minute, second, offset) / 1000L
+                    // toEpochSeconds already returns epoch SECONDS — do NOT divide again.
+                    return toEpochSeconds(year, month, day, hour, minute, second, offset)
                 }
             }
         }
@@ -425,7 +426,8 @@ class XmltvParser {
         val minute = g[5].toIntOrNull() ?: 0
         val second = g[6].toIntOrNull() ?: 0
         val offset = g[7].takeIf { it.isNotEmpty() }?.let { parseOffset(it) }
-        return toEpochSeconds(year, month, day, hour, minute, second, offset) / 1000L
+        // toEpochSeconds already returns epoch SECONDS — do NOT divide again.
+        return toEpochSeconds(year, month, day, hour, minute, second, offset)
     }
 
     /**
